@@ -113,6 +113,7 @@ const AGX_GRADE_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
+    uExposure: { value: 1.12 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -125,6 +126,7 @@ const AGX_GRADE_SHADER = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float uTime;
+    uniform float uExposure;
 
     varying vec2 vUv;
 
@@ -180,7 +182,7 @@ const AGX_GRADE_SHADER = {
 
     void main() {
       vec4 texel = texture2D(tDiffuse, vUv);
-      vec3 color = agxToneMapping(texel.rgb * 1.12);
+      vec3 color = agxToneMapping(texel.rgb * uExposure);
 
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
       vec3 coolShadows = vec3(0.96, 0.99, 1.04);
@@ -188,8 +190,9 @@ const AGX_GRADE_SHADER = {
       color *= mix(coolShadows, warmHighlights, smoothstep(0.18, 0.85, luma));
 
       vec2 centered = vUv - 0.5;
-      float vignette = 1.0 - dot(centered, centered) * 0.30;
-      color *= clamp(vignette, 0.76, 1.0);
+      float vignetteStrength = mix(0.30, 0.20, clamp((uExposure - 1.12) * 2.5, 0.0, 1.0));
+      float vignette = 1.0 - dot(centered, centered) * vignetteStrength;
+      color *= clamp(vignette, 0.80, 1.0);
 
       float grain = (hashGrain(vUv * 1200.0 + fract(uTime * 17.0)) - 0.5) * 0.010;
       color = clamp(color + grain, 0.0, 1.0);
@@ -290,6 +293,9 @@ export function createPostProcessing(options: {
     }
     if (godRaysPass.uniforms.uPlungeCenterZ) {
       godRaysPass.uniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
+    }
+    if (gradePass.uniforms.uExposure) {
+      gradePass.uniforms.uExposure.value = preset.exposure;
     }
   };
 

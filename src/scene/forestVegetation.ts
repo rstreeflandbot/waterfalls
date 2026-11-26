@@ -80,7 +80,7 @@ ${SHARED_ATMOS_AND_SHADOW_GLSL}
 
 void main() {
   vec4 texSample = texture2D(uLeafTex, vUv);
-  if (texSample.a < 0.42) {
+  if (texSample.a < 0.30) {
     discard;
   }
 
@@ -111,9 +111,9 @@ void main() {
   float rimGlow = pow(1.0 - abs(dot(n, viewDir)), 2.0) * 0.45;
   float translucency = (backLight * 0.9 + rimGlow * 0.45) * mix(0.35, 1.0, shadow) * (0.4 + 0.6 * vCardShade);
 
-  vec3 skyAmbient = mix(vec3(0.06, 0.075, 0.065), vec3(0.18, 0.21, 0.19), vCardShade);
-  vec3 directLight = vec3(1.55, 1.15, 0.66) * lit;
-  vec3 sssColor = albedo * vec3(1.85, 1.18, 0.35) * translucency * uSubsurfaceStrength;
+  vec3 skyAmbient = mix(vec3(0.12, 0.15, 0.12), vec3(0.32, 0.36, 0.30), vCardShade);
+  vec3 directLight = vec3(2.05, 1.62, 0.98) * lit;
+  vec3 sssColor = albedo * vec3(2.0, 1.32, 0.44) * translucency * uSubsurfaceStrength;
 
   vec3 color = albedo * (skyAmbient + directLight) + sssColor;
 
@@ -121,10 +121,111 @@ void main() {
   float dist = length(toFrag);
   vec3 rayDir = toFrag / max(dist, 0.0001);
   float heightMist = smoothstep(14.0, 44.0, vWorldPos.y) * 0.48 + exp(-max(vWorldPos.y, 0.0) * 0.028) * 0.52;
-  float fogDensity = 0.0056 * (0.55 + 0.72 * heightMist);
-  float fogFactor = clamp(1.0 - exp(-pow(dist * fogDensity, 1.38)), 0.0, 0.84);
+  float fogDensity = 0.0048 * (0.55 + 0.72 * heightMist);
+  float fogFactor = clamp(1.0 - exp(-pow(dist * fogDensity, 1.38)), 0.0, 0.78);
   float sunAlign = max(dot(rayDir, sunDir), 0.0);
-  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.82);
+  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.84);
+  color = mix(color, fogColor, fogFactor);
+
+  gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+const FOREST_GRASS_VERTEX_SHADER = /* glsl */ `
+attribute vec3 aBladeTint;
+
+uniform float uTime;
+uniform vec2 uPlungeCenter;
+
+varying float vHeightT;
+varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
+varying vec3 vBladeTint;
+
+void main() {
+  vHeightT = uv.y;
+  vBladeTint = aBladeTint;
+
+  vec4 instOrigin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  vec2 awayFromFalls = instOrigin.xz - uPlungeCenter;
+  float distToFalls = max(length(awayFromFalls), 0.1);
+  vec2 radialDir = awayFromFalls / distToFalls;
+  float downdraft = exp(-distToFalls * 0.05) * 0.32;
+
+  float gust = sin(uTime * 1.9 + instOrigin.x * 0.34 + instOrigin.z * 0.27) * 0.14;
+  float flutter = sin(uTime * 4.8 + instOrigin.x * 1.3 - instOrigin.z * 0.95) * 0.04;
+  float bendAmount = uv.y * uv.y;
+
+  vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
+  worldPos.x += (radialDir.x * downdraft + gust + flutter) * bendAmount;
+  worldPos.z += (radialDir.y * downdraft + gust * 0.7) * bendAmount;
+  worldPos.y -= abs(downdraft + gust) * 0.12 * bendAmount;
+
+  mat3 im = mat3(instanceMatrix);
+  mat3 adjugateT = mat3(
+    cross(im[1], im[2]),
+    cross(im[2], im[0]),
+    cross(im[0], im[1])
+  );
+  vWorldNormal = normalize(mat3(modelMatrix) * adjugateT * normal);
+  vWorldPos = worldPos.xyz;
+  gl_Position = projectionMatrix * viewMatrix * worldPos;
+}
+`;
+
+const FOREST_GRASS_FRAGMENT_SHADER = /* glsl */ `
+uniform vec3 uSunDirection;
+uniform sampler2D uSunShadowMap;
+uniform mat4 uSunShadowMatrix;
+uniform float uShadowMapSize;
+uniform vec3 uFogCool;
+uniform vec3 uFogWarm;
+
+varying float vHeightT;
+varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
+varying vec3 vBladeTint;
+
+${SHARED_ATMOS_AND_SHADOW_GLSL}
+
+void main() {
+  vec3 sunDir = normalize(uSunDirection);
+  vec3 viewDir = normalize(cameraPosition - vWorldPos);
+  vec3 n = normalize(vWorldNormal);
+  if (!gl_FrontFacing) {
+    n = -n;
+  }
+  vec3 litNormal = normalize(mix(vec3(0.0, 1.0, 0.0), n, 0.45));
+
+  float shadow = sampleSunShadowPcf(
+    vWorldPos,
+    litNormal,
+    sunDir,
+    uSunShadowMap,
+    uSunShadowMatrix,
+    uShadowMapSize
+  );
+
+  vec3 rootColor = vec3(0.022, 0.052, 0.014) * vBladeTint;
+  vec3 tipColor = vec3(0.14, 0.24, 0.045) * vBladeTint;
+  vec3 albedo = mix(rootColor, tipColor, smoothstep(0.0, 1.0, vHeightT));
+
+  float sunFacing = clamp((dot(litNormal, sunDir) + 0.35) / 1.35, 0.0, 1.0) * mix(0.32, 1.0, shadow);
+  float sss = pow(max(dot(-viewDir, sunDir), 0.0), 2.4) * mix(0.3, 1.0, shadow) * vHeightT;
+
+  vec3 skyAmbient = vec3(0.14, 0.19, 0.14) * (0.45 + 0.55 * vHeightT);
+  vec3 directSun = vec3(1.95, 1.54, 0.92) * sunFacing;
+  vec3 translucency = albedo * vec3(1.65, 1.45, 0.42) * sss * 1.15;
+
+  vec3 color = albedo * (skyAmbient + directSun) + translucency;
+
+  vec3 toFrag = vWorldPos - cameraPosition;
+  float dist = length(toFrag);
+  vec3 rayDir = toFrag / max(dist, 0.0001);
+  float fogDensity = 0.0046;
+  float fogFactor = clamp(1.0 - exp(-pow(dist * fogDensity, 1.38)), 0.0, 0.78);
+  float sunAlign = max(dot(rayDir, sunDir), 0.0);
+  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.84);
   color = mix(color, fogColor, fogFactor);
 
   gl_FragColor = vec4(color, 1.0);
@@ -173,9 +274,9 @@ function createAutumnLeafClusterTexture(anisotropy: number): THREE.CanvasTexture
       ctx.translate(leaf.cx, leaf.cy);
       ctx.rotate(leaf.rotation);
 
-      const r = Math.min(255, Math.round(235 * leaf.brightness));
-      const g = Math.min(255, Math.round((214 - leaf.warmShift * 42) * leaf.brightness));
-      const b = Math.min(255, Math.round((152 - leaf.warmShift * 48) * leaf.brightness));
+      const r = Math.min(255, Math.round(248 * leaf.brightness));
+      const g = Math.min(255, Math.round((242 - leaf.warmShift * 18) * leaf.brightness));
+      const b = Math.min(255, Math.round((212 - leaf.warmShift * 26) * leaf.brightness));
 
       const grad = ctx.createRadialGradient(0, -leaf.radius * 0.15, 2, 0, 0, leaf.radius * 1.05);
       grad.addColorStop(
@@ -274,28 +375,52 @@ function createConiferBoughTexture(anisotropy: number): THREE.CanvasTexture {
       const x1 = sprig.x0 + cosA * sprig.length;
       const y1 = sprig.y0 + sinA * sprig.length;
 
-      ctx.strokeStyle = 'rgba(54, 42, 30, 0.92)';
-      ctx.lineWidth = 3.2;
+      const coreSteps = Math.max(10, Math.floor(sprig.length * 0.24));
+      for (let s = 0; s <= coreSteps; s++) {
+        const t = s / coreSteps;
+        const bx = sprig.x0 + cosA * sprig.length * t;
+        const by = sprig.y0 + sinA * sprig.length * t;
+        const plumeRadius = sprig.needleLen * (0.68 - t * 0.36) * (0.85 + rand() * 0.3);
+        const r = Math.round((58 + rand() * 24) * sprig.shade);
+        const g = Math.round((112 + rand() * 38) * sprig.shade);
+        const b = Math.round((64 + rand() * 20) * sprig.shade);
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.beginPath();
+        ctx.ellipse(
+          bx,
+          by,
+          plumeRadius * 0.95,
+          plumeRadius * 0.65,
+          sprig.angle + (rand() - 0.5) * 0.4,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = 'rgba(56, 44, 30, 0.95)';
+      ctx.lineWidth = 4.2;
       ctx.beginPath();
       ctx.moveTo(sprig.x0, sprig.y0);
       ctx.lineTo(x1, y1);
       ctx.stroke();
 
-      const steps = Math.floor(sprig.length * 0.55);
-      for (let s = 2; s < steps; s++) {
+      const steps = Math.floor(sprig.length * 0.48);
+      for (let s = 1; s < steps; s++) {
         const t = s / steps;
         const bx = sprig.x0 + cosA * sprig.length * t;
         const by = sprig.y0 + sinA * sprig.length * t;
-        const taper = 1.0 - t * 0.48;
+        const taper = 1.0 - t * 0.44;
 
         for (const side of [-1, 1]) {
-          const nAngle = sprig.angle + side * (0.62 + (rand() - 0.5) * 0.32);
-          const nLen = sprig.needleLen * taper * (0.72 + rand() * 0.55);
-          const r = Math.round((46 + rand() * 24) * sprig.shade);
-          const g = Math.round((86 + rand() * 38) * sprig.shade);
-          const b = Math.round((52 + rand() * 18) * sprig.shade);
+          const nAngle = sprig.angle + side * (0.58 + (rand() - 0.5) * 0.3);
+          const nLen = sprig.needleLen * taper * (0.85 + rand() * 0.48);
+          const r = Math.round((70 + rand() * 30) * sprig.shade);
+          const g = Math.round((132 + rand() * 44) * sprig.shade);
+          const b = Math.round((72 + rand() * 22) * sprig.shade);
           ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
-          ctx.lineWidth = 2.0 + rand() * 1.4;
+          ctx.lineWidth = 4.8 + rand() * 2.6;
+          ctx.lineCap = 'round';
           ctx.beginPath();
           ctx.moveTo(bx, by);
           ctx.lineTo(bx + Math.cos(nAngle) * nLen, by + Math.sin(nAngle) * nLen);
@@ -308,26 +433,26 @@ function createConiferBoughTexture(anisotropy: number): THREE.CanvasTexture {
       x0: size * 0.5,
       y0: size * 0.94,
       angle: -Math.PI * 0.5,
-      length: size * 0.82,
-      needleLen: 34,
-      shade: 0.92,
+      length: size * 0.84,
+      needleLen: 46,
+      shade: 0.96,
     });
 
-    const subBranches = 16;
+    const subBranches = 18;
     for (let i = 0; i < subBranches; i++) {
-      const t = 0.14 + (i / subBranches) * 0.74;
+      const t = 0.1 + (i / subBranches) * 0.78;
       const side = i % 2 === 0 ? -1 : 1;
-      const originY = size * (0.9 - t * 0.72);
+      const originY = size * (0.9 - t * 0.74);
       const originX = size * 0.5 + side * (4 + rand() * 8);
-      const spread = side * (0.48 + (1 - t) * 0.52 + (rand() - 0.5) * 0.16);
-      const len = size * (0.24 + (1 - t) * 0.24) * (0.82 + rand() * 0.34);
+      const spread = side * (0.44 + (1 - t) * 0.54 + (rand() - 0.5) * 0.16);
+      const len = size * (0.28 + (1 - t) * 0.26) * (0.85 + rand() * 0.3);
       drawSprig({
         x0: originX,
         y0: originY,
         angle: -Math.PI * 0.5 + spread,
         length: len,
-        needleLen: 22 + (1 - t) * 14,
-        shade: 0.76 + t * 0.42,
+        needleLen: 30 + (1 - t) * 18,
+        shade: 0.78 + t * 0.4,
       });
     }
   }
@@ -492,12 +617,12 @@ function createDeciduousTreeArchetype(seed: number): {
   const fIdx: number[] = [];
 
   const trunkPts = [
-    new THREE.Vector3(0, -0.05, 0),
+    new THREE.Vector3(0, -0.28, 0),
     new THREE.Vector3((rand() - 0.5) * 0.04, 0.22, (rand() - 0.5) * 0.04),
     new THREE.Vector3((rand() - 0.5) * 0.06, 0.48, (rand() - 0.5) * 0.06),
     new THREE.Vector3((rand() - 0.5) * 0.07, 0.76, (rand() - 0.5) * 0.07),
   ];
-  const trunkRadii = [0.054, 0.036, 0.026, 0.014];
+  const trunkRadii = [0.062, 0.036, 0.026, 0.014];
 
   for (let i = 0; i < trunkPts.length - 1; i++) {
     const p0 = trunkPts[i];
@@ -657,9 +782,9 @@ function createConiferArchetype(seed: number): {
     normals: wNorm,
     uvs: wUv,
     indices: wIdx,
-    start: new THREE.Vector3(0, -0.04, 0),
-    end: new THREE.Vector3(0, 0.94, 0),
-    radiusStart: 0.046,
+    start: new THREE.Vector3(0, -0.25, 0),
+    end: new THREE.Vector3(0, 0.92, 0),
+    radiusStart: 0.052,
     radiusEnd: 0.006,
     radialSegments: 6,
     vScale: 6.0,
@@ -738,6 +863,114 @@ function createConiferArchetype(seed: number): {
   return { trunkGeo, boughGeo };
 }
 
+function createForestGrassTuftGeometry(): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  const bladeCount = 3;
+  let vertexOffset = 0;
+
+  for (let b = 0; b < bladeCount; b++) {
+    const yaw = (b / bladeCount) * Math.PI * 2 + 0.35;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const heightScale = 0.84 + (b % 2) * 0.26;
+    const lean = 0.2 + b * 0.04;
+    const baseOffsetX = cosY * 0.07;
+    const baseOffsetZ = sinY * 0.07;
+
+    const rawPts: readonly (readonly [number, number, number, number, number])[] = [
+      [-0.052, 0.0, 0.0, 0, 0],
+      [0.052, 0.0, 0.0, 1, 0],
+      [-0.04, 0.28 * heightScale, 0.05 * lean, 0, 0.35],
+      [0.04, 0.28 * heightScale, 0.05 * lean, 1, 0.35],
+      [-0.02, 0.58 * heightScale, 0.16 * lean, 0, 0.7],
+      [0.02, 0.58 * heightScale, 0.16 * lean, 1, 0.7],
+      [0.0, 0.86 * heightScale, 0.34 * lean, 0.5, 1.0],
+    ];
+
+    for (const pt of rawPts) {
+      const lx = pt[0];
+      const ly = pt[1];
+      const lz = pt[2];
+      const wx = lx * cosY - lz * sinY + baseOffsetX;
+      const wz = lx * sinY + lz * cosY + baseOffsetZ;
+      positions.push(wx, ly, wz);
+      uvs.push(pt[3], pt[4]);
+    }
+
+    indices.push(
+      vertexOffset,
+      vertexOffset + 1,
+      vertexOffset + 2,
+      vertexOffset + 1,
+      vertexOffset + 3,
+      vertexOffset + 2,
+      vertexOffset + 2,
+      vertexOffset + 3,
+      vertexOffset + 4,
+      vertexOffset + 3,
+      vertexOffset + 5,
+      vertexOffset + 4,
+      vertexOffset + 4,
+      vertexOffset + 5,
+      vertexOffset + 6,
+    );
+    vertexOffset += 7;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createWallFoliageCushionGeometry(seed: number): THREE.BufferGeometry {
+  const rand = createSeededRandom(seed);
+  const fPos: number[] = [];
+  const fNorm: number[] = [];
+  const fUv: number[] = [];
+  const fShade: number[] = [];
+  const fIdx: number[] = [];
+
+  const cardCount = 11;
+  for (let i = 0; i < cardCount; i++) {
+    const angle = (i / cardCount) * Math.PI * 2 + (rand() - 0.5) * 0.4;
+    const radius = 0.25 + rand() * 0.52;
+    const center = new THREE.Vector3(
+      Math.cos(angle) * radius,
+      (rand() - 0.35) * 0.58,
+      Math.sin(angle) * radius,
+    );
+    const size = 0.95 + rand() * 0.65;
+    appendCuppedFoliageCard({
+      positions: fPos,
+      normals: fNorm,
+      uvs: fUv,
+      shades: fShade,
+      indices: fIdx,
+      center,
+      width: size,
+      height: size * (0.88 + rand() * 0.28),
+      yaw: angle + Math.PI * 0.5 + (rand() - 0.5) * 0.8,
+      pitch: (rand() - 0.5) * 0.95,
+      roll: (rand() - 0.5) * 0.7,
+      shade: 0.35 + (center.y + 0.5) * 0.65,
+    });
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(fPos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(fNorm, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(fUv, 2));
+  geo.setAttribute('aCardShade', new THREE.Float32BufferAttribute(fShade, 1));
+  geo.setIndex(fIdx);
+  return geo;
+}
+
 function normalizeGroundedPlantGeometry(rawGeometry: THREE.BufferGeometry): THREE.BufferGeometry {
   const cloned = rawGeometry.clone();
   cloned.computeBoundingBox();
@@ -810,14 +1043,14 @@ function loadPhotogrammetryFoliageSet(options: {
           ? rawMat.clone()
           : new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0.02 });
 
-      material.color.setRGB(1, 1, 1);
+      material.color.setRGB(1.14, 1.14, 1.08);
       material.alphaMap = alphaMap;
       material.alphaTest = 0.42;
       material.transparent = false;
       material.side = THREE.DoubleSide;
-      material.roughness = 0.74;
+      material.roughness = 0.68;
       material.metalness = 0.02;
-      material.envMapIntensity = 1.15;
+      material.envMapIntensity = 1.45;
       if (material.map) {
         material.map.anisotropy = options.anisotropy;
       }
@@ -882,13 +1115,13 @@ function computeForestSlope(coords: { readonly x: number; readonly z: number }):
 }
 
 const AUTUMN_CANOPY_PALETTE: readonly (readonly [number, number, number])[] = [
-  [1.0, 0.72, 0.08],
-  [0.98, 0.56, 0.06],
-  [0.94, 0.36, 0.05],
-  [0.82, 0.22, 0.06],
-  [0.96, 0.82, 0.14],
-  [0.64, 0.68, 0.14],
-  [0.34, 0.52, 0.14],
+  [1.0, 0.84, 0.04],
+  [1.0, 0.64, 0.03],
+  [0.98, 0.4, 0.03],
+  [0.86, 0.24, 0.04],
+  [0.96, 0.9, 0.08],
+  [0.66, 0.78, 0.08],
+  [0.3, 0.62, 0.1],
 ];
 
 const SHRUB_AUTUMN_PALETTE: readonly number[] = [
@@ -1024,14 +1257,14 @@ export function createForestVegetation(options: {
   }
 
   const heroAutumnSpecs: readonly HeroAutumnSpec[] = [
-    { x: -12.6, z: -13.2, h: 16.5, w: 12.2, rgb: [1.0, 0.76, 0.08] },
-    { x: -16.8, z: -15.4, h: 19.2, w: 13.8, rgb: [0.98, 0.52, 0.06] },
-    { x: -15.2, z: -6.8, h: 14.5, w: 11.4, rgb: [0.94, 0.64, 0.1] },
-    { x: 11.4, z: -13.4, h: 18.8, w: 13.4, rgb: [1.0, 0.68, 0.07] },
-    { x: 15.8, z: -15.2, h: 17.6, w: 12.6, rgb: [0.92, 0.42, 0.06] },
-    { x: 14.8, z: -5.8, h: 13.8, w: 10.6, rgb: [0.74, 0.72, 0.14] },
-    { x: -19.8, z: 3.4, h: 15.4, w: 11.8, rgb: [0.96, 0.44, 0.06] },
-    { x: 18.6, z: 4.8, h: 14.6, w: 11.5, rgb: [0.98, 0.72, 0.1] },
+    { x: -12.6, z: -13.2, h: 16.5, w: 12.2, rgb: [1.0, 0.84, 0.04] },
+    { x: -16.8, z: -15.4, h: 19.2, w: 13.8, rgb: [1.0, 0.58, 0.03] },
+    { x: -15.2, z: -6.8, h: 14.5, w: 11.4, rgb: [0.98, 0.72, 0.05] },
+    { x: 11.4, z: -13.4, h: 18.8, w: 13.4, rgb: [1.0, 0.76, 0.04] },
+    { x: 15.8, z: -15.2, h: 17.6, w: 12.6, rgb: [0.96, 0.44, 0.03] },
+    { x: 14.8, z: -5.8, h: 13.8, w: 10.6, rgb: [0.76, 0.82, 0.08] },
+    { x: -19.8, z: 3.4, h: 15.4, w: 11.8, rgb: [0.98, 0.46, 0.04] },
+    { x: 18.6, z: 4.8, h: 14.6, w: 11.5, rgb: [1.0, 0.8, 0.05] },
   ];
 
   for (const spec of heroAutumnSpecs) {
@@ -1231,16 +1464,16 @@ export function createForestVegetation(options: {
     });
   }
 
-  const shrubTarget = options.isSoftwareGpu ? 65 : 135;
+  const shrubTarget = options.isSoftwareGpu ? 115 : 245;
   for (
     let attempt = 0;
-    attempt < shrubTarget * 6 && shrubPlacements.length < shrubTarget;
+    attempt < shrubTarget * 7 && shrubPlacements.length < shrubTarget;
     attempt++
   ) {
-    const x = (rand() - 0.5) * 54.0;
-    const z = -16.0 + rand() * 54.0;
+    const x = (rand() - 0.5) * 60.0;
+    const z = -18.0 + rand() * 58.0;
 
-    if (Math.hypot(x, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 6.4) {
+    if (Math.hypot(x, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 5.4) {
       continue;
     }
     const riverCenter = computeForestRiverCenterX(z);
@@ -1248,23 +1481,23 @@ export function createForestVegetation(options: {
       5.8 +
       Math.exp(-Math.pow((z - (FOREST_WATERFALL_CONFIG.plungeCenterZ + 4.5)) / 9.2, 2)) * 4.8 +
       smoothstep({ edge0: 12, edge1: 86, value: z }) * 8.6;
-    if (Math.abs(x - riverCenter) < riverHalfWidth - 0.2 && z > computeForestEscarpmentZ(x)) {
+    if (Math.abs(x - riverCenter) < riverHalfWidth - 0.3 && z > computeForestEscarpmentZ(x)) {
       continue;
     }
 
     const y = computeForestCanyonTerrainHeight({ x, z });
-    if (y < 0.35 || y > 24.0) {
+    if (y < 0.25 || y > 26.0) {
       continue;
     }
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.25) {
+    if (slope > 1.85) {
       continue;
     }
 
-    const s = 1.25 + rand() * 1.9;
-    dummy.position.set(x, y - 0.16, z);
-    dummy.rotation.set((rand() - 0.5) * 0.28, rand() * Math.PI * 2, (rand() - 0.5) * 0.28);
-    dummy.scale.set(s, s * (0.78 + rand() * 0.42), s);
+    const s = 1.35 + rand() * 2.15;
+    dummy.position.set(x, y - 0.18, z);
+    dummy.rotation.set((rand() - 0.5) * 0.34, rand() * Math.PI * 2, (rand() - 0.5) * 0.34);
+    dummy.scale.set(s, s * (0.8 + rand() * 0.42), s);
     dummy.updateMatrix();
 
     const hex = SHRUB_AUTUMN_PALETTE[Math.floor(rand() * SHRUB_AUTUMN_PALETTE.length)] ?? 0x6ea02b;
@@ -1275,12 +1508,12 @@ export function createForestVegetation(options: {
   }
 
   const fernPlacements: PlantPlacement[] = [];
-  const fernTarget = options.isSoftwareGpu ? 95 : 220;
-  for (let attempt = 0; attempt < fernTarget * 6 && fernPlacements.length < fernTarget; attempt++) {
-    const x = (rand() - 0.5) * 56.0;
-    const z = -17.0 + rand() * 58.0;
+  const fernTarget = options.isSoftwareGpu ? 160 : 420;
+  for (let attempt = 0; attempt < fernTarget * 7 && fernPlacements.length < fernTarget; attempt++) {
+    const x = (rand() - 0.5) * 62.0;
+    const z = -18.0 + rand() * 62.0;
 
-    if (Math.hypot(x * 0.8, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 5.6) {
+    if (Math.hypot(x * 0.8, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 4.9) {
       continue;
     }
     const riverCenter = computeForestRiverCenterX(z);
@@ -1288,23 +1521,23 @@ export function createForestVegetation(options: {
       5.8 +
       Math.exp(-Math.pow((z - (FOREST_WATERFALL_CONFIG.plungeCenterZ + 4.5)) / 9.2, 2)) * 4.8 +
       smoothstep({ edge0: 12, edge1: 86, value: z }) * 8.6;
-    if (Math.abs(x - riverCenter) < riverHalfWidth + 0.1 && z > computeForestEscarpmentZ(x)) {
+    if (Math.abs(x - riverCenter) < riverHalfWidth && z > computeForestEscarpmentZ(x)) {
       continue;
     }
 
     const y = computeForestCanyonTerrainHeight({ x, z });
-    if (y < 0.35 || y > 24.0) {
+    if (y < 0.25 || y > 26.0) {
       continue;
     }
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.2) {
+    if (slope > 1.8) {
       continue;
     }
 
-    const s = 0.85 + rand() * 1.35;
+    const s = 0.95 + rand() * 1.55;
     dummy.position.set(x, y - 0.08, z);
-    dummy.rotation.set((rand() - 0.5) * 0.32, rand() * Math.PI * 2, (rand() - 0.5) * 0.32);
-    dummy.scale.set(s, s * (0.85 + rand() * 0.35), s);
+    dummy.rotation.set((rand() - 0.5) * 0.36, rand() * Math.PI * 2, (rand() - 0.5) * 0.36);
+    dummy.scale.set(s, s * (0.85 + rand() * 0.38), s);
     dummy.updateMatrix();
 
     const hex = FERN_PALETTE[Math.floor(rand() * FERN_PALETTE.length)] ?? 0x4c852d;
@@ -1313,6 +1546,169 @@ export function createForestVegetation(options: {
       color: new THREE.Color(hex),
     });
   }
+
+  const wallCushionGeo = createWallFoliageCushionGeometry(55109);
+  disposables.geometries.push(wallCushionGeo);
+  const wallCushionMatrices: THREE.Matrix4[] = [];
+  const wallCushionColors: number[] = [];
+  const wallCushionPalette: readonly (readonly [number, number, number])[] = [
+    [0.24, 0.58, 0.14],
+    [0.36, 0.7, 0.16],
+    [0.56, 0.78, 0.16],
+    [0.18, 0.46, 0.12],
+    [0.92, 0.74, 0.1],
+    [0.96, 0.5, 0.06],
+    [0.72, 0.76, 0.14],
+  ];
+
+  const wallCushionTarget = options.isSoftwareGpu ? 110 : 260;
+  for (
+    let attempt = 0;
+    attempt < wallCushionTarget * 8 && wallCushionMatrices.length < wallCushionTarget;
+    attempt++
+  ) {
+    const side = attempt % 2 === 0 ? -1 : 1;
+    const x = side * (5.2 + rand() * 24.0);
+    const z = -17.5 + rand() * 44.0;
+
+    if (Math.abs(x) < 4.8 && z < -6.0) {
+      continue;
+    }
+    const y = computeForestCanyonTerrainHeight({ x, z });
+    if (y < 1.2 || y > 25.0) {
+      continue;
+    }
+    const slope = computeForestSlope({ x, z });
+    if (slope < 0.32 || slope > 3.0) {
+      continue;
+    }
+
+    const sx = 1.35 + rand() * 2.15;
+    const sy = 1.1 + rand() * 1.75;
+    dummy.position.set(x, y - 0.15, z);
+    dummy.rotation.set((rand() - 0.5) * 0.4, rand() * Math.PI * 2, (rand() - 0.5) * 0.4);
+    dummy.scale.set(sx, sy, sx);
+    dummy.updateMatrix();
+    wallCushionMatrices.push(dummy.matrix.clone());
+
+    const swatch = wallCushionPalette[Math.floor(rand() * wallCushionPalette.length)] ?? [
+      0.36, 0.66, 0.16,
+    ];
+    const jitter = 0.85 + rand() * 0.3;
+    wallCushionColors.push(swatch[0] * jitter, swatch[1] * jitter, swatch[2] * jitter);
+  }
+
+  const wallCushions = new THREE.InstancedMesh(
+    wallCushionGeo,
+    autumnCanopyMat,
+    wallCushionMatrices.length,
+  );
+  wallCushions.castShadow = true;
+  wallCushions.receiveShadow = true;
+  wallCushions.customDepthMaterial = autumnDepthMat;
+  wallCushions.frustumCulled = false;
+
+  for (let i = 0; i < wallCushionMatrices.length; i++) {
+    const m = wallCushionMatrices[i];
+    if (m) {
+      wallCushions.setMatrixAt(i, m);
+    }
+  }
+  wallCushions.instanceMatrix.needsUpdate = true;
+  wallCushionGeo.setAttribute(
+    'aCanopyColor',
+    new THREE.InstancedBufferAttribute(new Float32Array(wallCushionColors), 3),
+  );
+  group.add(wallCushions);
+
+  const grassTuftGeo = createForestGrassTuftGeometry();
+  disposables.geometries.push(grassTuftGeo);
+  const forestGrassUniforms = {
+    uTime: { value: 0 },
+    uPlungeCenter: { value: new THREE.Vector2(0, FOREST_WATERFALL_CONFIG.plungeCenterZ) },
+    uSunDirection: { value: sunDir },
+    uSunShadowMap: { value: options.fallbackShadowTexture },
+    uSunShadowMatrix: { value: new THREE.Matrix4() },
+    uShadowMapSize: { value: 1024 },
+    uFogCool: { value: fogCool },
+    uFogWarm: { value: fogWarm },
+  };
+  const forestGrassMat = new THREE.ShaderMaterial({
+    vertexShader: FOREST_GRASS_VERTEX_SHADER,
+    fragmentShader: FOREST_GRASS_FRAGMENT_SHADER,
+    uniforms: forestGrassUniforms,
+    side: THREE.DoubleSide,
+  });
+  disposables.materials.push(forestGrassMat);
+
+  const grassTarget = options.isSoftwareGpu ? 2200 : 6500;
+  const grassMatrices: THREE.Matrix4[] = [];
+  const grassTints: number[] = [];
+
+  for (
+    let attempt = 0;
+    attempt < grassTarget * 4 && grassMatrices.length < grassTarget;
+    attempt++
+  ) {
+    const x = (rand() - 0.5) * 78.0;
+    const z = -22.0 + rand() * 68.0;
+
+    if (Math.hypot(x * 0.78, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 5.2) {
+      continue;
+    }
+    const riverCenter = computeForestRiverCenterX(z);
+    const riverHalfWidth =
+      5.8 +
+      Math.exp(-Math.pow((z - (FOREST_WATERFALL_CONFIG.plungeCenterZ + 4.5)) / 9.2, 2)) * 4.8 +
+      smoothstep({ edge0: 12, edge1: 86, value: z }) * 8.6;
+    if (Math.abs(x - riverCenter) < riverHalfWidth + 0.15 && z > computeForestEscarpmentZ(x)) {
+      continue;
+    }
+
+    const y = computeForestCanyonTerrainHeight({ x, z });
+    if (y < 0.28 || y > 29.0) {
+      continue;
+    }
+    const slope = computeForestSlope({ x, z });
+    if (slope > 1.55) {
+      continue;
+    }
+
+    const scale = 0.65 + rand() * 1.15;
+    dummy.position.set(x, y - 0.06, z);
+    dummy.rotation.set((rand() - 0.5) * 0.35, rand() * Math.PI * 2, (rand() - 0.5) * 0.35);
+    dummy.scale.set(scale, scale * (0.8 + rand() * 0.45), scale);
+    dummy.updateMatrix();
+    grassMatrices.push(dummy.matrix.clone());
+
+    const warmth = rand();
+    if (warmth > 0.82) {
+      grassTints.push(1.45 + rand() * 0.35, 1.05 + rand() * 0.25, 0.42 + rand() * 0.18);
+    } else if (warmth > 0.45) {
+      grassTints.push(0.88 + rand() * 0.32, 1.12 + rand() * 0.28, 0.58 + rand() * 0.2);
+    } else {
+      grassTints.push(0.58 + rand() * 0.24, 0.95 + rand() * 0.26, 0.52 + rand() * 0.18);
+    }
+  }
+
+  const grassInstanced = new THREE.InstancedMesh(
+    grassTuftGeo,
+    forestGrassMat,
+    grassMatrices.length,
+  );
+  grassInstanced.frustumCulled = false;
+  for (let i = 0; i < grassMatrices.length; i++) {
+    const m = grassMatrices[i];
+    if (m) {
+      grassInstanced.setMatrixAt(i, m);
+    }
+  }
+  grassInstanced.instanceMatrix.needsUpdate = true;
+  grassTuftGeo.setAttribute(
+    'aBladeTint',
+    new THREE.InstancedBufferAttribute(new Float32Array(grassTints), 3),
+  );
+  group.add(grassInstanced);
 
   const isDisposed = () => disposed;
   loadPhotogrammetryFoliageSet({
@@ -1341,6 +1737,7 @@ export function createForestVegetation(options: {
     update: (elapsedSeconds: number) => {
       autumnCanopyUniforms.uTime.value = elapsedSeconds;
       coniferCanopyUniforms.uTime.value = elapsedSeconds;
+      forestGrassUniforms.uTime.value = elapsedSeconds;
     },
     setShadowUniforms: (shadowOptions) => {
       autumnCanopyUniforms.uSunShadowMap.value = shadowOptions.shadowMap;
@@ -1349,6 +1746,9 @@ export function createForestVegetation(options: {
       coniferCanopyUniforms.uSunShadowMap.value = shadowOptions.shadowMap;
       coniferCanopyUniforms.uSunShadowMatrix.value.copy(shadowOptions.shadowMatrix);
       coniferCanopyUniforms.uShadowMapSize.value = shadowOptions.shadowMapSize;
+      forestGrassUniforms.uSunShadowMap.value = shadowOptions.shadowMap;
+      forestGrassUniforms.uSunShadowMatrix.value.copy(shadowOptions.shadowMatrix);
+      forestGrassUniforms.uShadowMapSize.value = shadowOptions.shadowMapSize;
     },
     dispose: () => {
       disposed = true;

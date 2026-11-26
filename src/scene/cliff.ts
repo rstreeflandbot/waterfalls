@@ -170,6 +170,7 @@ function createTriplanarTerrainMaterial(options: {
 
         float macroNoise = texture2D(uNoiseTex, tPos.xz * 0.017).r;
         float patchNoise = texture2D(uNoiseTex, tPos.xz * 0.052 + vec2(0.31, 0.67)).a;
+        float detailNoise = texture2D(uNoiseTex, tPos.xz * 0.185 + vec2(tPos.y * 0.09, 0.42)).b;
         float strataNoise = texture2D(uNoiseTex, vec2(tPos.x * 0.025, tPos.y * 0.065)).g;
 
         vec3 basaltRaw = sampleTriplanarColor(uBasaltAlbedo, tPos, triWeights, rockScale);
@@ -177,10 +178,10 @@ function createTriplanarTerrainMaterial(options: {
 
         vec3 icelandRockCol = basaltRaw * vec3(0.74, 0.78, 0.85);
 
-        vec3 upperWarmRock = basaltRaw * mix(vec3(0.86, 0.64, 0.50), vec3(0.68, 0.44, 0.34), strataNoise);
-        vec3 lowerMossRockRaw = sampleTriplanarColor(uMossyRockAlbedo, tPos, triWeights, 0.125);
-        vec3 lowerMossRockRma = sampleTriplanarColor(uMossyRockRma, tPos, triWeights, 0.125);
-        vec3 lowerMossRockCol = lowerMossRockRaw * vec3(0.56, 0.64, 0.50);
+        vec3 upperWarmRock = basaltRaw * mix(vec3(0.95, 0.72, 0.56), vec3(0.72, 0.46, 0.34), strataNoise);
+        vec3 lowerMossRockRaw = sampleTriplanarColor(uMossyRockAlbedo, tPos, triWeights, 0.135);
+        vec3 lowerMossRockRma = sampleTriplanarColor(uMossyRockRma, tPos, triWeights, 0.135);
+        vec3 lowerMossRockCol = lowerMossRockRaw * mix(vec3(0.54, 0.62, 0.48), vec3(0.76, 0.68, 0.50), detailNoise * 0.55);
 
         float lowerGorgeBlend = 1.0 - smoothstep(13.5, 22.5, tPos.y + (macroNoise - 0.5) * 4.5);
         vec3 forestRockCol = mix(upperWarmRock, lowerMossRockCol, lowerGorgeBlend);
@@ -191,32 +192,33 @@ function createTriplanarTerrainMaterial(options: {
 
         vec3 mossRaw = texture2D(uMossAlbedo, tPos.xz * mossScale).rgb;
         vec3 icelandMoss = mossRaw * 0.92;
-        vec3 forestMoss = mix(
-          mossRaw * vec3(0.46, 0.84, 0.28),
-          mossRaw * vec3(0.84, 0.88, 0.26),
-          smoothstep(0.35, 0.82, patchNoise)
-        );
+        vec3 deepForestMoss = mossRaw * vec3(0.36, 0.72, 0.22);
+        vec3 sunlitChartreuseMoss = mossRaw * vec3(0.86, 0.96, 0.28);
+        vec3 autumnGoldMoss = mossRaw * vec3(0.98, 0.72, 0.20);
+        vec3 forestMoss = mix(deepForestMoss, sunlitChartreuseMoss, smoothstep(0.28, 0.78, patchNoise * 0.65 + detailNoise * 0.35));
+        forestMoss = mix(forestMoss, autumnGoldMoss, smoothstep(0.66, 0.92, macroNoise * 0.6 + detailNoise * 0.4) * 0.52);
         vec3 mossCol = mix(icelandMoss, forestMoss, uForestMode);
         vec3 mossRma = texture2D(uMossRma, tPos.xz * mossScale).rgb;
 
         vec3 sandRaw = texture2D(uSandAlbedo, tPos.xz * sandScale).rgb;
         float sandLuma = dot(sandRaw, vec3(0.299, 0.587, 0.114));
         vec3 icelandSand = mix(vec3(sandLuma), sandRaw, 0.22) * vec3(0.18, 0.20, 0.23);
-        vec3 forestLeafFloor = sandRaw * mix(vec3(0.76, 0.54, 0.34), vec3(0.95, 0.66, 0.28), patchNoise);
+        vec3 forestLeafFloor = sandRaw * mix(vec3(0.86, 0.58, 0.32), vec3(1.08, 0.74, 0.28), patchNoise);
         vec3 sandCol = mix(icelandSand, forestLeafFloor, uForestMode);
         vec3 sandRma = texture2D(uSandRma, tPos.xz * sandScale).rgb;
 
-        float slopeUp = smoothstep(mix(0.55, 0.32, uForestMode), mix(0.84, 0.72, uForestMode), tNorm.y);
+        float slopeUp = smoothstep(mix(0.55, 0.36, uForestMode), mix(0.84, 0.74, uForestMode), tNorm.y);
         float icelandSandMask = smoothstep(0.55, 0.84, tNorm.y) * (1.0 - smoothstep(0.65, 3.1, tPos.y + (macroNoise - 0.5) * 1.0));
-        float forestFloorMask = smoothstep(0.48, 0.82, tNorm.y) * (1.0 - smoothstep(1.2, 24.0, tPos.y)) * smoothstep(0.24, 0.68, macroNoise);
+        float forestFloorMask = smoothstep(0.46, 0.80, tNorm.y) * (1.0 - smoothstep(1.2, 26.0, tPos.y)) * smoothstep(0.22, 0.66, macroNoise * 0.7 + detailNoise * 0.3);
         float sandMask = mix(icelandSandMask, forestFloorMask, uForestMode);
 
         float outsideWaterfall = smoothstep(mix(5.8, 3.2, uForestMode), mix(12.2, 7.6, uForestMode), length(vec2(tPos.x * 0.78, tPos.z - uPlungeZ)));
         float mossElevation = smoothstep(mix(1.2, 0.45, uForestMode), mix(4.0, 2.0, uForestMode), tPos.y) * (1.0 - smoothstep(mix(42.0, 22.0, uForestMode), mix(62.0, 34.0, uForestMode), tPos.y));
-        float rawMossInput = slopeUp * mossElevation * outsideWaterfall * (mix(0.45, 0.74, uForestMode) + 0.55 * patchNoise);
+        float rawMossInput = slopeUp * mossElevation * outsideWaterfall * (mix(0.45, 0.68, uForestMode) + 0.55 * patchNoise);
         float heightCreviceMoss = clamp((mossRma.b + rawMossInput - activeRockRma.r) * 5.2, 0.0, 1.0) * smoothstep(0.14, 0.38, rawMossInput);
 
-        float cliffMossDrapes = uForestMode * lowerGorgeBlend * outsideWaterfall * smoothstep(1.2, 5.5, tPos.y) * smoothstep(0.28, 0.72, patchNoise) * 0.76;
+        float rockBreakup = smoothstep(0.28, 0.78, detailNoise * 0.62 + patchNoise * 0.38) * smoothstep(0.22, 0.72, activeRockRma.r);
+        float cliffMossDrapes = uForestMode * lowerGorgeBlend * outsideWaterfall * smoothstep(1.2, 5.5, tPos.y) * rockBreakup * 0.62;
         float totalMoss = clamp(heightCreviceMoss + cliffMossDrapes, 0.0, 1.0);
 
         vec3 groundAlbedo = mix(basaltCol, sandCol, sandMask);
@@ -881,42 +883,43 @@ function buildRockPlacements(presetId: WaterfallPresetId): {
       });
     }
 
-    const midShelfRocks = [-4.2, -2.1, 1.9, 4.1];
+    const midShelfRocks = [-4.4, -2.5, 2.4, 4.3];
     for (const rx of midShelfRocks) {
       const isEdge = Math.abs(rx) > 3.2;
-      const baseS = isEdge ? 2.4 : 1.45;
+      const baseS = isEdge ? 2.2 : 1.25;
       heroBoulders.push({
         x: rx,
-        y: computeForestMidShelfY(rx) - 0.55,
-        z: FOREST_WATERFALL_CONFIG.midShelfZ + (isEdge ? 0.25 : 0.45),
-        sx: baseS * (1.05 + rand() * 0.25),
-        sy: baseS * (0.74 + rand() * 0.24),
-        sz: baseS * (1.1 + rand() * 0.3),
-        rx: (rand() - 0.5) * 0.18,
+        y: computeForestMidShelfY(rx) - (isEdge ? 0.95 : 1.15),
+        z: FOREST_WATERFALL_CONFIG.midShelfZ - (isEdge ? 0.45 : 0.25),
+        sx: baseS * (1.05 + rand() * 0.2),
+        sy: baseS * (0.66 + rand() * 0.2),
+        sz: baseS * (1.05 + rand() * 0.25),
+        rx: (rand() - 0.5) * 0.16,
         ry: rand() * Math.PI * 2,
-        rz: (rand() - 0.5) * 0.18,
+        rz: (rand() - 0.5) * 0.16,
       });
     }
 
     const gorgeAbutments = [
-      { x: -7.4, y: 12.2, z: FOREST_WATERFALL_CONFIG.bridgeZ - 0.2, s: 3.4 },
-      { x: 7.4, y: 12.2, z: FOREST_WATERFALL_CONFIG.bridgeZ - 0.2, s: 3.5 },
-      { x: -6.2, y: 5.8, z: FOREST_WATERFALL_CONFIG.midShelfZ + 3.4, s: 3.1 },
-      { x: 6.4, y: 5.6, z: FOREST_WATERFALL_CONFIG.midShelfZ + 3.5, s: 3.2 },
-      { x: -8.6, y: 8.4, z: FOREST_WATERFALL_CONFIG.plungeCenterZ + 1.5, s: 3.3 },
-      { x: 8.8, y: 8.1, z: FOREST_WATERFALL_CONFIG.plungeCenterZ + 1.2, s: 3.4 },
+      { x: -8.6, z: FOREST_WATERFALL_CONFIG.bridgeZ - 0.5, s: 3.1 },
+      { x: 8.6, z: FOREST_WATERFALL_CONFIG.bridgeZ - 0.5, s: 3.2 },
+      { x: -8.2, z: FOREST_WATERFALL_CONFIG.midShelfZ + 3.4, s: 2.7 },
+      { x: 8.4, z: FOREST_WATERFALL_CONFIG.midShelfZ + 3.5, s: 2.8 },
+      { x: -9.8, z: FOREST_WATERFALL_CONFIG.plungeCenterZ + 1.8, s: 2.8 },
+      { x: 10.0, z: FOREST_WATERFALL_CONFIG.plungeCenterZ + 1.5, s: 2.9 },
     ];
     for (const shelf of gorgeAbutments) {
+      const gy = computeForestCanyonTerrainHeight({ x: shelf.x, z: shelf.z });
       heroBoulders.push({
         x: shelf.x,
-        y: shelf.y,
+        y: gy - shelf.s * 0.55,
         z: shelf.z,
         sx: shelf.s,
-        sy: shelf.s * 0.85,
+        sy: shelf.s * 0.78,
         sz: shelf.s,
-        rx: (rand() - 0.5) * 0.2,
+        rx: (rand() - 0.5) * 0.18,
         ry: rand() * Math.PI * 2,
-        rz: (rand() - 0.5) * 0.2,
+        rz: (rand() - 0.5) * 0.18,
       });
     }
   } else {
