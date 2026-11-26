@@ -274,6 +274,101 @@ body {
   color: rgba(226, 232, 240, 0.78);
 }
 
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(
+    circle at 50% 38%,
+    rgba(24, 33, 44, 0.94) 0%,
+    rgba(9, 13, 18, 0.98) 76%
+  );
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  opacity: 1;
+  transition:
+    opacity 0.55s ease,
+    visibility 0.55s ease;
+}
+
+.loading-overlay.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.loading-card {
+  width: min(380px, 100%);
+  padding: 28px 30px;
+  border-radius: 18px;
+  background: rgba(15, 21, 28, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.loading-eyebrow {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(242, 198, 146, 0.88);
+  margin-bottom: 6px;
+}
+
+.loading-title {
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: rgba(245, 248, 252, 0.96);
+  margin-bottom: 20px;
+}
+
+.loading-bar-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.loading-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(242, 188, 126, 0.85), rgba(154, 214, 182, 0.95));
+  transition: width 0.22s ease-out;
+}
+
+.loading-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.loading-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading-percent {
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 248, 252, 0.9);
+  flex-shrink: 0;
+}
+
+.hud-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 @media (max-width: 640px) {
   .hud-root {
     padding: 16px;
@@ -290,5 +385,14 @@ body {
   .hud-button {
     width: 36px;
     padding: 0;
+  }
+
+  .hud-button-accent {
+    width: auto;
+    padding: 0 12px;
+  }
+
+  .hud-button-accent .hud-button-label {
+    display: inline;
   }
 }

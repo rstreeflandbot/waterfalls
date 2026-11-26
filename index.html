@@ -10,6 +10,25 @@
     <div id="app" class="app-root">
       <div id="canvas-container" class="canvas-container"></div>
       <div id="hud-root" class="hud-root" aria-label="Scene controls"></div>
+      <div
+        id="loading-overlay"
+        class="loading-overlay"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading waterfall scene"
+      >
+        <div class="loading-card">
+          <div class="loading-eyebrow" data-loading-eyebrow>ICELAND · VOLCANIC HIGHLANDS</div>
+          <div class="loading-title" data-loading-title>Skógafoss</div>
+          <div class="loading-bar-track">
+            <div class="loading-bar-fill" data-loading-bar style="width: 6%"></div>
+          </div>
+          <div class="loading-meta">
+            <span class="loading-status" data-loading-status>Initializing WebGL2 renderer...</span>
+            <span class="loading-percent" data-loading-percent>6%</span>
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

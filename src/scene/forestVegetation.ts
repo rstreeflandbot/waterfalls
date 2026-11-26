@@ -8,11 +8,12 @@ import {
   computeForestEscarpmentZ,
   computeForestRiverCenterX,
 } from './forestCanyonMath';
-import { WaterfallTextureBundle } from './pbrTextures';
+import { ForestTextureSets } from './pbrTextures';
 import { WaterfallPresetConfig } from './waterfallPresets';
 
 export interface ForestVegetationSystem {
   readonly group: THREE.Group;
+  readonly ready: Promise<void>;
   readonly update: (elapsedSeconds: number) => void;
   readonly setShadowUniforms: (options: {
     readonly shadowMap: THREE.Texture;
@@ -476,7 +477,7 @@ function createAutumnBoughAtlasTexture(options: {
     dilateTransparentRgb({
       ctx,
       size,
-      passes: 4,
+      passes: 2,
       fallbackRgb: [224, 198, 132],
     });
   }
@@ -596,7 +597,7 @@ function createConiferSprigAtlasTexture(options: {
     dilateTransparentRgb({
       ctx,
       size,
-      passes: 4,
+      passes: 2,
       fallbackRgb: [72, 118, 78],
     });
   }
@@ -1160,6 +1161,7 @@ interface PlantPlacement {
 function loadPhotogrammetryFoliageSet(options: {
   readonly modelUrl: string;
   readonly alphaUrl: string;
+  readonly label: string;
   readonly placements: readonly PlantPlacement[];
   readonly group: THREE.Group;
   readonly anisotropy: number;
@@ -1172,168 +1174,190 @@ function loadPhotogrammetryFoliageSet(options: {
     readonly textures: THREE.Texture[];
   };
   readonly onLoaded: () => void;
-}): void {
+  readonly onAssetLoaded?: (label: string) => void;
+}): Promise<void> {
   const texLoader = new THREE.TextureLoader();
-  const alphaMap = texLoader.load(options.alphaUrl);
+  let resolveAlpha: () => void = () => {};
+  const alphaReady = new Promise<void>((resolve) => {
+    resolveAlpha = resolve;
+  });
+
+  const alphaMap = texLoader.load(
+    options.alphaUrl,
+    () => resolveAlpha(),
+    undefined,
+    () => resolveAlpha(),
+  );
   alphaMap.colorSpace = THREE.NoColorSpace;
   alphaMap.anisotropy = options.anisotropy;
   alphaMap.flipY = false;
   options.disposables.textures.push(alphaMap);
 
-  const gltfLoader = new GLTFLoader();
-  gltfLoader.load(
-    options.modelUrl,
-    (gltf) => {
-      if (options.isDisposed()) {
-        return;
-      }
-
-      const sourceMeshes: THREE.Mesh[] = [];
-      gltf.scene.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          sourceMeshes.push(child);
+  const gltfReady = new Promise<void>((resolve) => {
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.load(
+      options.modelUrl,
+      (gltf) => {
+        if (options.isDisposed()) {
+          resolve();
+          return;
         }
-      });
 
-      const firstMesh = sourceMeshes[0];
-      if (!firstMesh) {
-        return;
-      }
+        const sourceMeshes: THREE.Mesh[] = [];
+        gltf.scene.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            sourceMeshes.push(child);
+          }
+        });
 
-      const rawMat = Array.isArray(firstMesh.material) ? firstMesh.material[0] : firstMesh.material;
-      const material =
-        rawMat instanceof THREE.MeshStandardMaterial
-          ? rawMat.clone()
-          : new THREE.MeshStandardMaterial({ roughness: 0.72, metalness: 0.02 });
-
-      material.color.setRGB(1, 1, 1);
-      material.alphaMap = alphaMap;
-      material.alphaTest = 0.42;
-      material.transparent = false;
-      material.side = THREE.DoubleSide;
-      material.roughness = 0.68;
-      material.metalness = 0.02;
-      material.envMapIntensity = 0.85;
-      if (material.map) {
-        material.map.anisotropy = options.anisotropy;
-      }
-      if (material.normalMap) {
-        material.normalMap.anisotropy = options.anisotropy;
-      }
-
-      material.onBeforeCompile = (shader) => {
-        shader.uniforms.uSunDir = { value: options.sunDir };
-        shader.uniforms.uHueRemap = { value: options.isAutumnHueRemap ? 1.0 : 0.0 };
-
-        shader.vertexShader = shader.vertexShader
-          .replace(
-            '#include <common>',
-            /* glsl */ `
-            #include <common>
-            varying vec3 vPlantWPos;
-            `,
-          )
-          .replace(
-            '#include <worldpos_vertex>',
-            /* glsl */ `
-            #include <worldpos_vertex>
-            vec4 plantLPos = vec4(transformed, 1.0);
-            #ifdef USE_INSTANCING
-              plantLPos = instanceMatrix * plantLPos;
-            #endif
-            vPlantWPos = (modelMatrix * plantLPos).xyz;
-            `,
-          );
-
-        shader.fragmentShader = shader.fragmentShader
-          .replace(
-            '#include <common>',
-            /* glsl */ `
-            #include <common>
-            uniform vec3 uSunDir;
-            uniform float uHueRemap;
-            varying vec3 vPlantWPos;
-            `,
-          )
-          .replace(
-            '#include <color_fragment>',
-            /* glsl */ `
-            #ifdef USE_INSTANCING_COLOR
-              if (uHueRemap > 0.5) {
-                float leafLuma = dot(diffuseColor.rgb, vec3(0.22, 0.68, 0.10));
-                vec3 remapped = vColor.rgb * clamp(leafLuma * 2.55, 0.12, 1.45);
-                diffuseColor.rgb = mix(diffuseColor.rgb * 0.85, remapped, 0.88);
-              } else {
-                diffuseColor.rgb *= vColor.rgb;
-              }
-            #endif
-            `,
-          )
-          .replace(
-            '#include <aomap_fragment>',
-            /* glsl */ `
-            #include <aomap_fragment>
-            float pSlotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vPlantWPos.x));
-            float pDepthInGorge = 1.0 - smoothstep(1.5, 23.0, vPlantWPos.y);
-            float pBackWall = 1.0 - smoothstep(-19.0, 8.0, vPlantWPos.z);
-            float pGorgeAo = mix(1.0, 0.22, pDepthInGorge * (0.55 * pSlotNarrow + 0.45 * pBackWall));
-            reflectedLight.indirectDiffuse *= pGorgeAo;
-            vec3 pViewDir = normalize(cameraPosition - vPlantWPos);
-            float pBacklight = pow(max(dot(-pViewDir, normalize(uSunDir)), 0.0), 2.5);
-            reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.4, 1.0, 0.35) * pBacklight * 0.45 * pGorgeAo;
-            `,
-          );
-      };
-      material.customProgramCacheKey = () =>
-        options.isAutumnHueRemap ? 'forest-shrub-hueremap-v2' : 'forest-fern-gorgeao-v2';
-
-      options.disposables.materials.push(material);
-
-      const variantCount = Math.min(sourceMeshes.length, 3);
-      const buckets: PlantPlacement[][] = Array.from({ length: variantCount }, () => []);
-      for (let i = 0; i < options.placements.length; i++) {
-        const placement = options.placements[i];
-        const bucket = buckets[i % variantCount];
-        if (placement && bucket) {
-          bucket.push(placement);
+        const firstMesh = sourceMeshes[0];
+        if (!firstMesh) {
+          resolve();
+          return;
         }
-      }
 
-      for (let v = 0; v < variantCount; v++) {
-        const mesh = sourceMeshes[v];
-        const bucket = buckets[v];
-        if (!mesh || !bucket || bucket.length === 0) {
-          continue;
+        const rawMat = Array.isArray(firstMesh.material)
+          ? firstMesh.material[0]
+          : firstMesh.material;
+        const material =
+          rawMat instanceof THREE.MeshStandardMaterial
+            ? rawMat.clone()
+            : new THREE.MeshStandardMaterial({ roughness: 0.72, metalness: 0.02 });
+
+        material.color.setRGB(1, 1, 1);
+        material.alphaMap = alphaMap;
+        material.alphaTest = 0.42;
+        material.transparent = false;
+        material.side = THREE.DoubleSide;
+        material.roughness = 0.68;
+        material.metalness = 0.02;
+        material.envMapIntensity = 0.85;
+        if (material.map) {
+          material.map.anisotropy = options.anisotropy;
         }
-        const geo = normalizeGroundedPlantGeometry(mesh.geometry);
-        options.disposables.geometries.push(geo);
+        if (material.normalMap) {
+          material.normalMap.anisotropy = options.anisotropy;
+        }
 
-        const instanced = new THREE.InstancedMesh(geo, material, bucket.length);
-        instanced.castShadow = true;
-        instanced.receiveShadow = true;
+        material.onBeforeCompile = (shader) => {
+          shader.uniforms.uSunDir = { value: options.sunDir };
+          shader.uniforms.uHueRemap = { value: options.isAutumnHueRemap ? 1.0 : 0.0 };
 
-        for (let i = 0; i < bucket.length; i++) {
-          const item = bucket[i];
-          if (!item) {
+          shader.vertexShader = shader.vertexShader
+            .replace(
+              '#include <common>',
+              /* glsl */ `
+              #include <common>
+              varying vec3 vPlantWPos;
+              `,
+            )
+            .replace(
+              '#include <worldpos_vertex>',
+              /* glsl */ `
+              #include <worldpos_vertex>
+              vec4 plantLPos = vec4(transformed, 1.0);
+              #ifdef USE_INSTANCING
+                plantLPos = instanceMatrix * plantLPos;
+              #endif
+              vPlantWPos = (modelMatrix * plantLPos).xyz;
+              `,
+            );
+
+          shader.fragmentShader = shader.fragmentShader
+            .replace(
+              '#include <common>',
+              /* glsl */ `
+              #include <common>
+              uniform vec3 uSunDir;
+              uniform float uHueRemap;
+              varying vec3 vPlantWPos;
+              `,
+            )
+            .replace(
+              '#include <color_fragment>',
+              /* glsl */ `
+              #ifdef USE_INSTANCING_COLOR
+                if (uHueRemap > 0.5) {
+                  float leafLuma = dot(diffuseColor.rgb, vec3(0.22, 0.68, 0.10));
+                  vec3 remapped = vColor.rgb * clamp(leafLuma * 2.55, 0.12, 1.45);
+                  diffuseColor.rgb = mix(diffuseColor.rgb * 0.85, remapped, 0.88);
+                } else {
+                  diffuseColor.rgb *= vColor.rgb;
+                }
+              #endif
+              `,
+            )
+            .replace(
+              '#include <aomap_fragment>',
+              /* glsl */ `
+              #include <aomap_fragment>
+              float pSlotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vPlantWPos.x));
+              float pDepthInGorge = 1.0 - smoothstep(1.5, 23.0, vPlantWPos.y);
+              float pBackWall = 1.0 - smoothstep(-19.0, 8.0, vPlantWPos.z);
+              float pGorgeAo = mix(1.0, 0.22, pDepthInGorge * (0.55 * pSlotNarrow + 0.45 * pBackWall));
+              reflectedLight.indirectDiffuse *= pGorgeAo;
+              vec3 pViewDir = normalize(cameraPosition - vPlantWPos);
+              float pBacklight = pow(max(dot(-pViewDir, normalize(uSunDir)), 0.0), 2.5);
+              reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.4, 1.0, 0.35) * pBacklight * 0.45 * pGorgeAo;
+              `,
+            );
+        };
+        material.customProgramCacheKey = () =>
+          options.isAutumnHueRemap ? 'forest-shrub-hueremap-v2' : 'forest-fern-gorgeao-v2';
+
+        options.disposables.materials.push(material);
+
+        const variantCount = Math.min(sourceMeshes.length, 3);
+        const buckets: PlantPlacement[][] = Array.from({ length: variantCount }, () => []);
+        for (let i = 0; i < options.placements.length; i++) {
+          const placement = options.placements[i];
+          const bucket = buckets[i % variantCount];
+          if (placement && bucket) {
+            bucket.push(placement);
+          }
+        }
+
+        for (let v = 0; v < variantCount; v++) {
+          const mesh = sourceMeshes[v];
+          const bucket = buckets[v];
+          if (!mesh || !bucket || bucket.length === 0) {
             continue;
           }
-          instanced.setMatrixAt(i, item.matrix);
-          instanced.setColorAt(i, item.color);
-        }
-        instanced.instanceMatrix.needsUpdate = true;
-        if (instanced.instanceColor) {
-          instanced.instanceColor.needsUpdate = true;
-        }
-        options.group.add(instanced);
-      }
+          const geo = normalizeGroundedPlantGeometry(mesh.geometry);
+          options.disposables.geometries.push(geo);
 
-      options.onLoaded();
-    },
-    undefined,
-    () => {
-      return;
-    },
-  );
+          const instanced = new THREE.InstancedMesh(geo, material, bucket.length);
+          instanced.castShadow = true;
+          instanced.receiveShadow = true;
+
+          for (let i = 0; i < bucket.length; i++) {
+            const item = bucket[i];
+            if (!item) {
+              continue;
+            }
+            instanced.setMatrixAt(i, item.matrix);
+            instanced.setColorAt(i, item.color);
+          }
+          instanced.instanceMatrix.needsUpdate = true;
+          if (instanced.instanceColor) {
+            instanced.instanceColor.needsUpdate = true;
+          }
+          options.group.add(instanced);
+        }
+
+        options.onLoaded();
+        resolve();
+      },
+      undefined,
+      () => {
+        resolve();
+      },
+    );
+  });
+
+  return Promise.all([alphaReady, gltfReady]).then(() => {
+    options.onAssetLoaded?.(options.label);
+  });
 }
 
 function computeForestSlope(coords: { readonly x: number; readonly z: number }): number {
@@ -1420,11 +1444,13 @@ function addInstancedArchetype(options: {
 
 export function createForestVegetation(options: {
   readonly preset: WaterfallPresetConfig;
-  readonly textures: WaterfallTextureBundle;
+  readonly forestTextures: ForestTextureSets;
   readonly anisotropy: number;
   readonly isSoftwareGpu: boolean;
+  readonly isMobileGpu: boolean;
   readonly fallbackShadowTexture: THREE.Texture;
   readonly onStaticGeometryChanged: () => void;
+  readonly onAssetLoaded?: (label: string) => void;
 }): ForestVegetationSystem {
   const group = new THREE.Group();
   const rand = createSeededRandom(62041);
@@ -1458,10 +1484,10 @@ export function createForestVegetation(options: {
   );
 
   const barkMat = new THREE.MeshStandardMaterial({
-    map: options.textures.forestBark.albedoMap,
-    normalMap: options.textures.forestBark.normalMap,
+    map: options.forestTextures.forestBark.albedoMap,
+    normalMap: options.forestTextures.forestBark.normalMap,
     normalScale: new THREE.Vector2(1.2, 1.2),
-    roughnessMap: options.textures.forestBark.rmaMap,
+    roughnessMap: options.forestTextures.forestBark.rmaMap,
     color: new THREE.Color(0x46392e),
     roughness: 0.92,
     metalness: 0.02,
@@ -1469,7 +1495,7 @@ export function createForestVegetation(options: {
   });
   disposables.materials.push(barkMat);
 
-  const atlasSize = options.isSoftwareGpu ? 512 : 1024;
+  const atlasSize = options.isSoftwareGpu || options.isMobileGpu ? 512 : 1024;
   const mapleTex = createAutumnBoughAtlasTexture({
     size: atlasSize,
     anisotropy: options.anisotropy,
@@ -1904,7 +1930,7 @@ export function createForestVegetation(options: {
   });
   disposables.materials.push(forestGrassMat);
 
-  const grassTarget = options.isSoftwareGpu ? 2000 : 5800;
+  const grassTarget = options.isSoftwareGpu ? 2000 : options.isMobileGpu ? 3400 : 5800;
   const grassMatrices: THREE.Matrix4[] = [];
   const grassTints: number[] = [];
 
@@ -1974,33 +2000,42 @@ export function createForestVegetation(options: {
   group.add(grassInstanced);
 
   const isDisposed = () => disposed;
-  loadPhotogrammetryFoliageSet({
-    modelUrl: '/models/shrub_02/shrub_02_1k.gltf',
-    alphaUrl: '/models/shrub_02/textures/shrub_02_alpha_1k.png',
-    placements: shrubPlacements,
-    group,
-    anisotropy: options.anisotropy,
-    sunDir,
-    isAutumnHueRemap: true,
-    isDisposed,
-    disposables,
-    onLoaded: options.onStaticGeometryChanged,
-  });
-  loadPhotogrammetryFoliageSet({
-    modelUrl: '/models/fern_02/fern_02_1k.gltf',
-    alphaUrl: '/models/fern_02/textures/fern_02_alpha_1k.png',
-    placements: fernPlacements,
-    group,
-    anisotropy: options.anisotropy,
-    sunDir,
-    isAutumnHueRemap: false,
-    isDisposed,
-    disposables,
-    onLoaded: options.onStaticGeometryChanged,
-  });
+  const foliageLoadPromises = [
+    loadPhotogrammetryFoliageSet({
+      modelUrl: '/models/shrub_02/shrub_02_1k.gltf',
+      alphaUrl: '/models/shrub_02/textures/shrub_02_alpha_1k.png',
+      label: 'Loading 3D autumn shrubs',
+      placements: shrubPlacements,
+      group,
+      anisotropy: options.anisotropy,
+      sunDir,
+      isAutumnHueRemap: true,
+      isDisposed,
+      disposables,
+      onLoaded: options.onStaticGeometryChanged,
+      onAssetLoaded: options.onAssetLoaded,
+    }),
+    loadPhotogrammetryFoliageSet({
+      modelUrl: '/models/fern_02/fern_02_1k.gltf',
+      alphaUrl: '/models/fern_02/textures/fern_02_alpha_1k.png',
+      label: 'Loading 3D sword ferns',
+      placements: fernPlacements,
+      group,
+      anisotropy: options.anisotropy,
+      sunDir,
+      isAutumnHueRemap: false,
+      isDisposed,
+      disposables,
+      onLoaded: options.onStaticGeometryChanged,
+      onAssetLoaded: options.onAssetLoaded,
+    }),
+  ];
+
+  const ready = Promise.all(foliageLoadPromises).then(() => undefined);
 
   return {
     group,
+    ready,
     update: (elapsedSeconds: number) => {
       autumnCanopyUniforms.uTime.value = elapsedSeconds;
       coniferCanopyUniforms.uTime.value = elapsedSeconds;

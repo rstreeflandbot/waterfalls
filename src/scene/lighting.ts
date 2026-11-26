@@ -12,11 +12,12 @@ export interface LightingSystem {
 export function createIcelandicLighting(options: {
   readonly scene: THREE.Scene;
   readonly isSoftwareGpu: boolean;
+  readonly isMobileGpu: boolean;
   readonly preset: WaterfallPresetConfig;
 }): LightingSystem {
   const { preset } = options;
   const group = new THREE.Group();
-  const shadowMapSize = options.isSoftwareGpu ? 1024 : 4096;
+  const shadowMapSize = options.isSoftwareGpu ? 1024 : options.isMobileGpu ? 2048 : 4096;
 
   const isForest = preset.id === 'forest';
   options.scene.fog = new THREE.FogExp2(preset.fogColorHex, isForest ? 0.0022 : 0.0052);

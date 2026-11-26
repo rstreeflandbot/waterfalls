@@ -5,10 +5,53 @@ import {
 } from '../scene/waterfallPresets';
 
 export interface HudCallbacks {
-  readonly onSwitchWaterfall: () => WaterfallPresetConfig;
+  readonly onSwitchWaterfall: () => Promise<WaterfallPresetConfig>;
   readonly onToggleSound: () => Promise<boolean>;
   readonly onToggleDrift: () => boolean;
   readonly onResetView: () => void;
+}
+
+export interface LoadingOverlayState {
+  readonly visible: boolean;
+  readonly eyebrow: string;
+  readonly title: string;
+  readonly progress: number;
+  readonly status: string;
+}
+
+export interface LoadingOverlayController {
+  readonly update: (state: LoadingOverlayState) => void;
+}
+
+export function createLoadingOverlay(container: HTMLElement): LoadingOverlayController {
+  const eyebrowEl = container.querySelector('[data-loading-eyebrow]');
+  const titleEl = container.querySelector('[data-loading-title]');
+  const barEl = container.querySelector('[data-loading-bar]');
+  const statusEl = container.querySelector('[data-loading-status]');
+  const percentEl = container.querySelector('[data-loading-percent]');
+
+  return {
+    update: (state) => {
+      const clamped = Math.max(0, Math.min(100, Math.round(state.progress)));
+      if (eyebrowEl) {
+        eyebrowEl.textContent = state.eyebrow;
+      }
+      if (titleEl) {
+        titleEl.textContent = state.title;
+      }
+      if (barEl instanceof HTMLElement) {
+        barEl.style.width = `${clamped}%`;
+      }
+      if (statusEl) {
+        statusEl.textContent = state.status;
+      }
+      if (percentEl) {
+        percentEl.textContent = `${clamped}%`;
+      }
+      container.classList.toggle('is-hidden', !state.visible);
+      container.setAttribute('aria-hidden', state.visible ? 'false' : 'true');
+    },
+  };
 }
 
 export interface HudController {
@@ -174,12 +217,24 @@ export function createHud(options: {
     restoreHudButton.hidden = !hidden;
   };
 
-  const handleSwitchClick = () => {
-    const activePreset = callbacks.onSwitchWaterfall();
-    eyebrow.textContent = activePreset.eyebrow;
-    title.textContent = activePreset.title;
-    document.title = `${activePreset.title} | WebGL Waterfall`;
-    switchButton.innerHTML = `${ICONS.switchScene}<span class="hud-button-label">${getSwitchLabel(activePreset)}</span>`;
+  let switching = false;
+
+  const handleSwitchClick = async () => {
+    if (switching) {
+      return;
+    }
+    switching = true;
+    switchButton.disabled = true;
+    try {
+      const activePreset = await callbacks.onSwitchWaterfall();
+      eyebrow.textContent = activePreset.eyebrow;
+      title.textContent = activePreset.title;
+      document.title = `${activePreset.title} | WebGL Waterfall`;
+      switchButton.innerHTML = `${ICONS.switchScene}<span class="hud-button-label">${getSwitchLabel(activePreset)}</span>`;
+    } finally {
+      switching = false;
+      switchButton.disabled = false;
+    }
   };
 
   const handleSoundClick = async () => {

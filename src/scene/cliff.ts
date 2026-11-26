@@ -18,11 +18,12 @@ import {
   computeForestEscarpmentZ,
   computeForestRiverCenterX,
 } from './forestCanyonMath';
-import { WaterfallTextureBundle } from './pbrTextures';
+import { ForestTextureSets, IcelandTextureSets, PbrTextureSet } from './pbrTextures';
 import { WaterfallPresetId } from './waterfallPresets';
 
 export interface CliffSystem {
   readonly group: THREE.Group;
+  readonly ready: Promise<void>;
   readonly update: (elapsedSeconds: number) => void;
   readonly dispose: () => void;
 }
@@ -357,16 +358,17 @@ function createTriplanarTerrainMaterial(options: {
 }
 
 function createBasaltColumnMaterial(options: {
-  readonly textures: WaterfallTextureBundle;
+  readonly basalt: PbrTextureSet;
+  readonly moss: PbrTextureSet;
   readonly noiseTexture: THREE.DataTexture;
   readonly timeUniform: { value: number };
   readonly presetId: WaterfallPresetId;
 }): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
-    map: options.textures.basalt.albedoMap,
-    normalMap: options.textures.basalt.normalMap,
+    map: options.basalt.albedoMap,
+    normalMap: options.basalt.normalMap,
     normalScale: new THREE.Vector2(1.5, 1.5),
-    roughnessMap: options.textures.basalt.rmaMap,
+    roughnessMap: options.basalt.rmaMap,
     roughness: 0.85,
     metalness: 0.06,
     envMapIntensity: 1.55,
@@ -375,7 +377,7 @@ function createBasaltColumnMaterial(options: {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = options.timeUniform;
     shader.uniforms.uNoiseTex = { value: options.noiseTexture };
-    shader.uniforms.uMossAlbedo = { value: options.textures.moss.albedoMap };
+    shader.uniforms.uMossAlbedo = { value: options.moss.albedoMap };
     shader.uniforms.uCrestHeight = { value: SCENE_CONFIG.crestHeight };
     shader.uniforms.uPlungeZ = { value: SCENE_CONFIG.plungeCenterZ };
 
@@ -469,14 +471,14 @@ function createBasaltColumnMaterial(options: {
 }
 
 function createBensonConcreteMaterial(options: {
-  readonly textures: WaterfallTextureBundle;
+  readonly bridgeStone: PbrTextureSet;
   readonly baseColorHex: number;
 }): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
-    map: options.textures.bridgeStone.albedoMap,
-    normalMap: options.textures.bridgeStone.normalMap,
+    map: options.bridgeStone.albedoMap,
+    normalMap: options.bridgeStone.normalMap,
     normalScale: new THREE.Vector2(0.72, 0.72),
-    roughnessMap: options.textures.bridgeStone.rmaMap,
+    roughnessMap: options.bridgeStone.rmaMap,
     color: new THREE.Color(options.baseColorHex),
     roughness: 0.78,
     metalness: 0.03,
@@ -555,7 +557,7 @@ function createBensonConcreteMaterial(options: {
 }
 
 function createForestStoneBridge(options: {
-  readonly textures: WaterfallTextureBundle;
+  readonly bridgeStone: PbrTextureSet;
   readonly disposables: {
     readonly geometries: THREE.BufferGeometry[];
     readonly materials: THREE.Material[];
@@ -577,11 +579,11 @@ function createForestStoneBridge(options: {
   };
 
   const concreteMat = createBensonConcreteMaterial({
-    textures: options.textures,
+    bridgeStone: options.bridgeStone,
     baseColorHex: 0xc8ccc4,
   });
   const trimMat = createBensonConcreteMaterial({
-    textures: options.textures,
+    bridgeStone: options.bridgeStone,
     baseColorHex: 0xb2b6ae,
   });
   options.disposables.materials.push(concreteMat, trimMat);
@@ -1284,6 +1286,7 @@ function buildRockPlacements(presetId: WaterfallPresetId): {
 
 function loadPhotogrammetryRockInstances(options: {
   readonly url: string;
+  readonly label: string;
   readonly placements: readonly RockPlacement[];
   readonly group: THREE.Group;
   readonly anisotropy: number;
@@ -1295,122 +1298,154 @@ function loadPhotogrammetryRockInstances(options: {
     readonly materials: THREE.Material[];
   };
   readonly onLoaded: () => void;
-}): void {
-  const loader = new GLTFLoader();
-  loader.load(
-    options.url,
-    (gltf) => {
-      if (options.isDisposed()) {
-        return;
-      }
-
-      const sourceMeshes: THREE.Mesh[] = [];
-      gltf.scene.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          sourceMeshes.push(child);
+  readonly onAssetLoaded?: (label: string) => void;
+}): Promise<void> {
+  return new Promise((resolve) => {
+    const loader = new GLTFLoader();
+    loader.load(
+      options.url,
+      (gltf) => {
+        if (options.isDisposed()) {
+          resolve();
+          return;
         }
-      });
 
-      const firstMesh = sourceMeshes[0];
-      if (!firstMesh) {
-        return;
-      }
-
-      let material: THREE.Material;
-      if (options.overrideMaterial) {
-        material = options.overrideMaterial;
-      } else {
-        const rawMat = Array.isArray(firstMesh.material)
-          ? firstMesh.material[0]
-          : firstMesh.material;
-        let stdMat: THREE.MeshStandardMaterial;
-
-        if (rawMat instanceof THREE.MeshStandardMaterial) {
-          stdMat = rawMat.clone();
-          stdMat.color.setRGB(options.tintRgb[0], options.tintRgb[1], options.tintRgb[2]);
-          stdMat.roughness = 0.66;
-          stdMat.metalness = 0.04;
-          stdMat.envMapIntensity = 1.3;
-          if (stdMat.map) {
-            stdMat.map.anisotropy = options.anisotropy;
+        const sourceMeshes: THREE.Mesh[] = [];
+        gltf.scene.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            sourceMeshes.push(child);
           }
-          if (stdMat.normalMap) {
-            stdMat.normalMap.anisotropy = options.anisotropy;
-            stdMat.normalScale.set(1.35, 1.35);
-          }
+        });
+
+        const firstMesh = sourceMeshes[0];
+        if (!firstMesh) {
+          options.onAssetLoaded?.(options.label);
+          resolve();
+          return;
+        }
+
+        let material: THREE.Material;
+        if (options.overrideMaterial) {
+          material = options.overrideMaterial;
         } else {
-          stdMat = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(0x22262c),
-            roughness: 0.72,
-            metalness: 0.05,
-          });
+          const rawMat = Array.isArray(firstMesh.material)
+            ? firstMesh.material[0]
+            : firstMesh.material;
+          let stdMat: THREE.MeshStandardMaterial;
+
+          if (rawMat instanceof THREE.MeshStandardMaterial) {
+            stdMat = rawMat.clone();
+            stdMat.color.setRGB(options.tintRgb[0], options.tintRgb[1], options.tintRgb[2]);
+            stdMat.roughness = 0.66;
+            stdMat.metalness = 0.04;
+            stdMat.envMapIntensity = 1.3;
+            if (stdMat.map) {
+              stdMat.map.anisotropy = options.anisotropy;
+            }
+            if (stdMat.normalMap) {
+              stdMat.normalMap.anisotropy = options.anisotropy;
+              stdMat.normalScale.set(1.35, 1.35);
+            }
+          } else {
+            stdMat = new THREE.MeshStandardMaterial({
+              color: new THREE.Color(0x22262c),
+              roughness: 0.72,
+              metalness: 0.05,
+            });
+          }
+          options.disposables.materials.push(stdMat);
+          material = stdMat;
         }
-        options.disposables.materials.push(stdMat);
-        material = stdMat;
-      }
 
-      const variantCount = Math.min(sourceMeshes.length, 4);
-      const buckets: RockPlacement[][] = Array.from({ length: variantCount }, () => []);
-      for (let i = 0; i < options.placements.length; i++) {
-        const spec = options.placements[i];
-        const bucket = buckets[i % variantCount];
-        if (spec && bucket) {
-          bucket.push(spec);
+        const variantCount = Math.min(sourceMeshes.length, 4);
+        const buckets: RockPlacement[][] = Array.from({ length: variantCount }, () => []);
+        for (let i = 0; i < options.placements.length; i++) {
+          const spec = options.placements[i];
+          const bucket = buckets[i % variantCount];
+          if (spec && bucket) {
+            bucket.push(spec);
+          }
         }
-      }
 
-      const dummy = new THREE.Object3D();
-      for (let v = 0; v < variantCount; v++) {
-        const mesh = sourceMeshes[v];
-        const bucket = buckets[v];
-        if (!mesh || !bucket || bucket.length === 0) {
-          continue;
-        }
-        const geometry = normalizeRockGeometry(mesh.geometry);
-        options.disposables.geometries.push(geometry);
-
-        const instanced = new THREE.InstancedMesh(geometry, material, bucket.length);
-        instanced.castShadow = true;
-        instanced.receiveShadow = true;
-
-        for (let i = 0; i < bucket.length; i++) {
-          const spec = bucket[i];
-          if (!spec) {
+        const dummy = new THREE.Object3D();
+        for (let v = 0; v < variantCount; v++) {
+          const mesh = sourceMeshes[v];
+          const bucket = buckets[v];
+          if (!mesh || !bucket || bucket.length === 0) {
             continue;
           }
-          dummy.position.set(spec.x, spec.y, spec.z);
-          dummy.rotation.set(spec.rx, spec.ry, spec.rz);
-          dummy.scale.set(spec.sx, spec.sy, spec.sz);
-          dummy.updateMatrix();
-          instanced.setMatrixAt(i, dummy.matrix);
-        }
-        instanced.instanceMatrix.needsUpdate = true;
-        options.group.add(instanced);
-      }
+          const geometry = normalizeRockGeometry(mesh.geometry);
+          options.disposables.geometries.push(geometry);
 
-      options.onLoaded();
-    },
-    undefined,
-    () => {
-      return;
-    },
-  );
+          const instanced = new THREE.InstancedMesh(geometry, material, bucket.length);
+          instanced.castShadow = true;
+          instanced.receiveShadow = true;
+
+          for (let i = 0; i < bucket.length; i++) {
+            const spec = bucket[i];
+            if (!spec) {
+              continue;
+            }
+            dummy.position.set(spec.x, spec.y, spec.z);
+            dummy.rotation.set(spec.rx, spec.ry, spec.rz);
+            dummy.scale.set(spec.sx, spec.sy, spec.sz);
+            dummy.updateMatrix();
+            instanced.setMatrixAt(i, dummy.matrix);
+          }
+          instanced.instanceMatrix.needsUpdate = true;
+          options.group.add(instanced);
+        }
+
+        options.onLoaded();
+        options.onAssetLoaded?.(options.label);
+        resolve();
+      },
+      undefined,
+      () => {
+        options.onAssetLoaded?.(options.label);
+        resolve();
+      },
+    );
+  });
 }
 
 export function createIcelandicCliff(options: {
   readonly noiseTexture: THREE.DataTexture;
-  readonly textures: WaterfallTextureBundle;
+  readonly icelandTextures: IcelandTextureSets | null;
+  readonly forestTextures: ForestTextureSets | null;
   readonly anisotropy: number;
   readonly presetId: WaterfallPresetId;
   readonly onStaticGeometryChanged: () => void;
+  readonly onAssetLoaded?: (label: string) => void;
 }): CliffSystem {
   const group = new THREE.Group();
   const timeUniform = { value: 0 };
   let disposed = false;
   const isForest = options.presetId === 'forest';
 
-  const primaryRock = isForest ? options.textures.forestCliff : options.textures.basalt;
-  const secondaryFloor = isForest ? options.textures.forestFloor : options.textures.volcanicSand;
+  const forestSets = options.forestTextures;
+  const icelandSets = options.icelandTextures;
+  const primaryRock = isForest
+    ? (forestSets?.forestCliff ?? icelandSets?.basalt)
+    : (icelandSets?.basalt ?? forestSets?.forestCliff);
+  const mossyRock = forestSets?.forestMossyRock ?? primaryRock;
+  const mossSet = isForest
+    ? (forestSets?.moss ?? icelandSets?.moss)
+    : (icelandSets?.moss ?? forestSets?.moss);
+  const secondaryFloor = isForest
+    ? (forestSets?.forestFloor ?? icelandSets?.volcanicSand)
+    : (icelandSets?.volcanicSand ?? forestSets?.forestFloor);
+
+  if (!primaryRock || !mossyRock || !mossSet || !secondaryFloor) {
+    return {
+      group,
+      ready: Promise.resolve(),
+      update: () => undefined,
+      dispose: () => {
+        disposed = true;
+      },
+    };
+  }
 
   const terrainUniforms: TerrainShaderUniforms = {
     uTime: timeUniform,
@@ -1418,12 +1453,12 @@ export function createIcelandicCliff(options: {
     uBasaltAlbedo: { value: primaryRock.albedoMap },
     uBasaltNormal: { value: primaryRock.normalMap },
     uBasaltRma: { value: primaryRock.rmaMap },
-    uMossyRockAlbedo: { value: options.textures.forestMossyRock.albedoMap },
-    uMossyRockNormal: { value: options.textures.forestMossyRock.normalMap },
-    uMossyRockRma: { value: options.textures.forestMossyRock.rmaMap },
-    uMossAlbedo: { value: options.textures.moss.albedoMap },
-    uMossNormal: { value: options.textures.moss.normalMap },
-    uMossRma: { value: options.textures.moss.rmaMap },
+    uMossyRockAlbedo: { value: mossyRock.albedoMap },
+    uMossyRockNormal: { value: mossyRock.normalMap },
+    uMossyRockRma: { value: mossyRock.rmaMap },
+    uMossAlbedo: { value: mossSet.albedoMap },
+    uMossNormal: { value: mossSet.normalMap },
+    uMossRma: { value: mossSet.rmaMap },
     uSandAlbedo: { value: secondaryFloor.albedoMap },
     uSandNormal: { value: secondaryFloor.normalMap },
     uSandRma: { value: secondaryFloor.rmaMap },
@@ -1445,9 +1480,9 @@ export function createIcelandicCliff(options: {
   terrainMesh.castShadow = true;
   group.add(terrainMesh);
 
-  if (isForest) {
+  if (isForest && forestSets) {
     const stoneBridge = createForestStoneBridge({
-      textures: options.textures,
+      bridgeStone: forestSets.bridgeStone,
       disposables,
     });
     group.add(stoneBridge);
@@ -1497,9 +1532,10 @@ export function createIcelandicCliff(options: {
       inst.instanceMatrix.needsUpdate = true;
       group.add(inst);
     }
-  } else {
+  } else if (icelandSets) {
     const columnMaterial = createBasaltColumnMaterial({
-      textures: options.textures,
+      basalt: icelandSets.basalt,
+      moss: icelandSets.moss,
       noiseTexture: options.noiseTexture,
       timeUniform,
       presetId: options.presetId,
@@ -1542,68 +1578,86 @@ export function createIcelandicCliff(options: {
 
   const rockGroups = buildRockPlacements(options.presetId);
   const isDisposed = () => disposed;
+  const rockLoadPromises: Promise<void>[] = [];
 
   if (isForest) {
-    loadPhotogrammetryRockInstances({
-      url: '/models/boulder_01/boulder_01_1k.gltf',
-      placements: [...rockGroups.heroBoulders, ...rockGroups.mediumRocks],
-      group,
-      anisotropy: options.anisotropy,
-      tintRgb: [0.46, 0.44, 0.42],
-      overrideMaterial: terrainMaterial,
-      isDisposed,
-      disposables,
-      onLoaded: options.onStaticGeometryChanged,
-    });
-    loadPhotogrammetryRockInstances({
-      url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
-      placements: rockGroups.screeRocks,
-      group,
-      anisotropy: options.anisotropy,
-      tintRgb: [0.42, 0.4, 0.38],
-      overrideMaterial: terrainMaterial,
-      isDisposed,
-      disposables,
-      onLoaded: options.onStaticGeometryChanged,
-    });
+    rockLoadPromises.push(
+      loadPhotogrammetryRockInstances({
+        url: '/models/boulder_01/boulder_01_1k.gltf',
+        label: 'Loading 3D mossy canyon boulders',
+        placements: [...rockGroups.heroBoulders, ...rockGroups.mediumRocks],
+        group,
+        anisotropy: options.anisotropy,
+        tintRgb: [0.46, 0.44, 0.42],
+        overrideMaterial: terrainMaterial,
+        isDisposed,
+        disposables,
+        onLoaded: options.onStaticGeometryChanged,
+        onAssetLoaded: options.onAssetLoaded,
+      }),
+      loadPhotogrammetryRockInstances({
+        url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
+        label: 'Loading 3D riverbank stones',
+        placements: rockGroups.screeRocks,
+        group,
+        anisotropy: options.anisotropy,
+        tintRgb: [0.42, 0.4, 0.38],
+        overrideMaterial: terrainMaterial,
+        isDisposed,
+        disposables,
+        onLoaded: options.onStaticGeometryChanged,
+        onAssetLoaded: options.onAssetLoaded,
+      }),
+    );
   } else {
-    loadPhotogrammetryRockInstances({
-      url: '/models/boulder_01/boulder_01_1k.gltf',
-      placements: rockGroups.heroBoulders,
-      group,
-      anisotropy: options.anisotropy,
-      tintRgb: [0.46, 0.5, 0.56],
-      overrideMaterial: null,
-      isDisposed,
-      disposables,
-      onLoaded: options.onStaticGeometryChanged,
-    });
-    loadPhotogrammetryRockInstances({
-      url: '/models/moon_rock_01/moon_rock_01_1k.gltf',
-      placements: rockGroups.mediumRocks,
-      group,
-      anisotropy: options.anisotropy,
-      tintRgb: [0.46, 0.5, 0.56],
-      overrideMaterial: null,
-      isDisposed,
-      disposables,
-      onLoaded: options.onStaticGeometryChanged,
-    });
-    loadPhotogrammetryRockInstances({
-      url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
-      placements: rockGroups.screeRocks,
-      group,
-      anisotropy: options.anisotropy,
-      tintRgb: [0.46, 0.5, 0.56],
-      overrideMaterial: null,
-      isDisposed,
-      disposables,
-      onLoaded: options.onStaticGeometryChanged,
-    });
+    rockLoadPromises.push(
+      loadPhotogrammetryRockInstances({
+        url: '/models/boulder_01/boulder_01_1k.gltf',
+        label: 'Loading 3D volcanic cliff boulders',
+        placements: rockGroups.heroBoulders,
+        group,
+        anisotropy: options.anisotropy,
+        tintRgb: [0.46, 0.5, 0.56],
+        overrideMaterial: null,
+        isDisposed,
+        disposables,
+        onLoaded: options.onStaticGeometryChanged,
+        onAssetLoaded: options.onAssetLoaded,
+      }),
+      loadPhotogrammetryRockInstances({
+        url: '/models/moon_rock_01/moon_rock_01_1k.gltf',
+        label: 'Loading 3D talus boulders',
+        placements: rockGroups.mediumRocks,
+        group,
+        anisotropy: options.anisotropy,
+        tintRgb: [0.46, 0.5, 0.56],
+        overrideMaterial: null,
+        isDisposed,
+        disposables,
+        onLoaded: options.onStaticGeometryChanged,
+        onAssetLoaded: options.onAssetLoaded,
+      }),
+      loadPhotogrammetryRockInstances({
+        url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
+        label: 'Loading 3D scree rocks',
+        placements: rockGroups.screeRocks,
+        group,
+        anisotropy: options.anisotropy,
+        tintRgb: [0.46, 0.5, 0.56],
+        overrideMaterial: null,
+        isDisposed,
+        disposables,
+        onLoaded: options.onStaticGeometryChanged,
+        onAssetLoaded: options.onAssetLoaded,
+      }),
+    );
   }
+
+  const ready = Promise.all(rockLoadPromises).then(() => undefined);
 
   return {
     group,
+    ready,
     update: (elapsedSeconds: number) => {
       timeUniform.value = elapsedSeconds;
     },

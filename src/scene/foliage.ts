@@ -120,9 +120,10 @@ function createCurvedBladeGeometry(): THREE.BufferGeometry {
 
 export function createHighlandFoliage(options: {
   readonly isSoftwareGpu: boolean;
+  readonly isMobileGpu: boolean;
   readonly fallbackShadowTexture: THREE.Texture;
 }): FoliageSystem {
-  const maxBlades = options.isSoftwareGpu ? 3500 : 16000;
+  const maxBlades = options.isSoftwareGpu ? 3500 : options.isMobileGpu ? 9500 : 16000;
   const geometry = createCurvedBladeGeometry();
   const rand = createSeededRandom(314159);
 

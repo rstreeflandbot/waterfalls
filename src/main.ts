@@ -1,19 +1,36 @@
 import { createWaterfallAudio } from './audio/waterfallAudio';
 import { createWaterfallScene } from './scene/waterfallScene';
-import { createHud, renderWebGlFallback } from './ui/hud';
+import { createHud, createLoadingOverlay, renderWebGlFallback } from './ui/hud';
 
 function bootstrap(): void {
   const canvasContainer = document.getElementById('canvas-container');
   const hudRoot = document.getElementById('hud-root');
+  const loadingRoot = document.getElementById('loading-overlay');
 
   if (!canvasContainer || !hudRoot) {
     return;
   }
 
+  const loadingOverlay = loadingRoot ? createLoadingOverlay(loadingRoot) : null;
+
   let sceneController: ReturnType<typeof createWaterfallScene>;
   try {
-    sceneController = createWaterfallScene(canvasContainer);
+    sceneController = createWaterfallScene({
+      container: canvasContainer,
+      onLoadProgress: (state) => {
+        loadingOverlay?.update(state);
+      },
+    });
   } catch {
+    if (loadingOverlay) {
+      loadingOverlay.update({
+        visible: false,
+        eyebrow: '',
+        title: '',
+        progress: 100,
+        status: '',
+      });
+    }
     renderWebGlFallback({
       container: canvasContainer,
       message:

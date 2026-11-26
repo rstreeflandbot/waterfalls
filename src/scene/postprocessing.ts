@@ -217,6 +217,163 @@ const VOLUMETRIC_GODRAYS_SHADER = {
   `,
 };
 
+const HALF_RES_MOBILE_FX_VERTEX = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+const HALF_RES_MOBILE_FX_FRAGMENT = /* glsl */ `
+uniform sampler2D tSceneDepth;
+uniform mat4 uInvProjection;
+uniform mat4 uInvView;
+uniform vec2 uHalfResolution;
+uniform vec3 uCameraPos;
+uniform vec3 uSunDirection;
+uniform sampler2D uSunShadowMap;
+uniform mat4 uSunShadowMatrix;
+uniform float uTime;
+uniform float uAoStrength;
+uniform float uRayStrength;
+uniform vec3 uRayTint;
+uniform float uPlungeCenterZ;
+uniform float uForestMode;
+
+varying vec2 vUv;
+
+${SHARED_ATMOS_AND_SHADOW_GLSL}
+
+vec3 reconstructViewPos(vec2 uv, float depth) {
+  vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec4 view = uInvProjection * clip;
+  return view.xyz / max(view.w, 0.0001);
+}
+
+float ign(vec2 p) {
+  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
+void main() {
+  float rawDepth = texture2D(tSceneDepth, vUv).r;
+  vec3 viewPos = reconstructViewPos(vUv, rawDepth);
+  float ao = 1.0;
+
+  if (uAoStrength > 0.001 && rawDepth < 0.9995 && -viewPos.z < 95.0) {
+    vec2 texel = 1.0 / max(uHalfResolution, vec2(1.0));
+    vec3 posR = reconstructViewPos(vUv + vec2(texel.x, 0.0), texture2D(tSceneDepth, vUv + vec2(texel.x, 0.0)).r);
+    vec3 posU = reconstructViewPos(vUv + vec2(0.0, texel.y), texture2D(tSceneDepth, vUv + vec2(0.0, texel.y)).r);
+    vec3 normal = normalize(cross(posR - viewPos, posU - viewPos));
+
+    float worldRadius = 1.65;
+    float screenRadius = clamp((worldRadius / max(-viewPos.z, 1.0)) * 0.72, 0.005, 0.038);
+    float angleOffset = ign(gl_FragCoord.xy) * 6.2831853;
+
+    float occ = 0.0;
+    const int TAPS = 6;
+    for (int i = 0; i < TAPS; i++) {
+      float fi = float(i);
+      float a = angleOffset + fi * 1.0471975;
+      float r = screenRadius * (0.34 + 0.66 * fract(fi * 0.6180339 + 0.2));
+      vec2 sampleUv = clamp(vUv + vec2(cos(a), sin(a)) * r, vec2(0.002), vec2(0.998));
+      float sampleDepth = texture2D(tSceneDepth, sampleUv).r;
+      if (sampleDepth >= 0.9995) {
+        continue;
+      }
+      vec3 samplePos = reconstructViewPos(sampleUv, sampleDepth);
+      vec3 delta = samplePos - viewPos;
+      float dist = length(delta);
+      if (dist < 0.02 || dist > worldRadius * 2.2) {
+        continue;
+      }
+      float horizon = max(dot(normal, delta / dist) - 0.12, 0.0);
+      float falloff = 1.0 - smoothstep(worldRadius * 0.35, worldRadius * 2.2, dist);
+      occ += horizon * falloff;
+    }
+
+    float distFade = 1.0 - smoothstep(45.0, 92.0, -viewPos.z);
+    ao = clamp(1.0 - (occ / float(TAPS)) * 1.45 * uAoStrength * distFade, 0.38, 1.0);
+  }
+
+  vec3 sunShaftColor = vec3(0.0);
+  if (uRayStrength > 0.001) {
+    vec3 worldPos = (uInvView * vec4(viewPos, 1.0)).xyz;
+    vec3 rayVec = worldPos - uCameraPos;
+    float maxDist = min(length(rayVec), 68.0);
+    vec3 rayDir = rayVec / max(length(rayVec), 0.0001);
+    vec3 sunDir = normalize(uSunDirection);
+
+    float cosTheta = dot(rayDir, sunDir);
+    float g = mix(0.72, 0.48, uForestMode);
+    float phase = (1.0 - g * g) / (4.0 * 3.14159 * pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5));
+    float phaseWeight = mix(
+      clamp(phase * 0.45, 0.0, 2.5),
+      clamp(phase * 0.65 + 0.18, 0.14, 2.2),
+      uForestMode
+    );
+
+    if (uForestMode > 0.5 || phaseWeight >= 0.04) {
+      float jitter = ign(gl_FragCoord.xy + fract(uTime * 11.3) * 17.0);
+      const int STEPS = 10;
+      float stepLen = maxDist / float(STEPS);
+      float scatterAccum = 0.0;
+
+      for (int i = 0; i < STEPS; i++) {
+        float marchDist = (float(i) + jitter) * stepLen;
+        vec3 samplePos = uCameraPos + rayDir * marchDist;
+
+        vec4 shadowCoord = uSunShadowMatrix * vec4(samplePos, 1.0);
+        float inLight = 1.0;
+        if (shadowCoord.w > 0.0) {
+          vec3 proj = shadowCoord.xyz / shadowCoord.w;
+          if (proj.x > 0.01 && proj.x < 0.99 && proj.y > 0.01 && proj.y < 0.99 && proj.z < 1.0) {
+            float stored = unpackThreeShadowDepth(texture2D(uSunShadowMap, proj.xy));
+            inLight = proj.z - 0.002 <= stored ? 1.0 : 0.0;
+          }
+        }
+
+        float plungeDist = length(samplePos.xz - vec2(0.0, uPlungeCenterZ));
+        float icelandMist = exp(-max(samplePos.y, 0.0) * 0.068) * (0.35 + 1.2 * exp(-plungeDist * 0.055));
+        float forestUpperMist =
+          smoothstep(8.0, 34.0, samplePos.y) * (0.35 + 0.85 * exp(-plungeDist * 0.042)) +
+          exp(-max(samplePos.y - 12.0, 0.0) * 0.14) * 0.32 * exp(-plungeDist * 0.075);
+        float valleyMist = mix(icelandMist, forestUpperMist, uForestMode);
+        scatterAccum += inLight * valleyMist * stepLen * mix(0.016, 0.011, uForestMode);
+      }
+
+      sunShaftColor = uRayTint * scatterAccum * phaseWeight * uRayStrength;
+    }
+  }
+
+  gl_FragColor = vec4(sunShaftColor, ao);
+}
+`;
+
+const HALF_RES_FX_COMPOSITE_SHADER = {
+  uniforms: {
+    tDiffuse: { value: null },
+    tHalfResFx: { value: null },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tHalfResFx;
+    varying vec2 vUv;
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      vec4 fx = texture2D(tHalfResFx, vUv);
+      gl_FragColor = vec4(base.rgb * fx.a + fx.rgb, base.a);
+    }
+  `,
+};
+
 const AGX_GRADE_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
@@ -356,11 +513,13 @@ export function createPostProcessing(options: {
   readonly width: number;
   readonly height: number;
   readonly isSoftwareGpu: boolean;
+  readonly isMobileGpu: boolean;
   readonly preset: WaterfallPresetConfig;
 }): PostProcessingSystem {
   const pixelRatio = options.renderer.getPixelRatio();
   const renderW = Math.max(1, Math.floor(options.width * pixelRatio));
   const renderH = Math.max(1, Math.floor(options.height * pixelRatio));
+  const useHalfResMobileFx = options.isMobileGpu && !options.isSoftwareGpu;
 
   const renderTarget = new THREE.WebGLRenderTarget(options.width, options.height, {
     type: THREE.HalfFloatType,
@@ -372,14 +531,78 @@ export function createPostProcessing(options: {
   const sourcePass = new ShaderPass(SOURCE_TEXTURE_COPY_SHADER);
   composer.addPass(sourcePass);
 
+  const halfW = Math.max(1, Math.floor(renderW * 0.5));
+  const halfH = Math.max(1, Math.floor(renderH * 0.5));
+  const halfResFxTarget = useHalfResMobileFx
+    ? new THREE.WebGLRenderTarget(halfW, halfH, {
+        type: THREE.HalfFloatType,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        depthBuffer: false,
+      })
+    : null;
+
+  const halfResFxScene = new THREE.Scene();
+  const halfResFxCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const halfResFxQuadGeo = new THREE.PlaneGeometry(2, 2);
+  interface HalfResFxUniforms {
+    readonly tSceneDepth: { value: THREE.Texture | null };
+    readonly uInvProjection: { value: THREE.Matrix4 };
+    readonly uInvView: { value: THREE.Matrix4 };
+    readonly uHalfResolution: { value: THREE.Vector2 };
+    readonly uCameraPos: { value: THREE.Vector3 };
+    readonly uSunDirection: { value: THREE.Vector3 };
+    readonly uSunShadowMap: { value: THREE.Texture | null };
+    readonly uSunShadowMatrix: { value: THREE.Matrix4 };
+    readonly uTime: { value: number };
+    readonly uAoStrength: { value: number };
+    readonly uRayStrength: { value: number };
+    readonly uRayTint: { value: THREE.Vector3 };
+    readonly uPlungeCenterZ: { value: number };
+    readonly uForestMode: { value: number };
+  }
+
+  const halfResFxUniforms: HalfResFxUniforms = {
+    tSceneDepth: { value: null },
+    uInvProjection: { value: new THREE.Matrix4() },
+    uInvView: { value: new THREE.Matrix4() },
+    uHalfResolution: { value: new THREE.Vector2(halfW, halfH) },
+    uCameraPos: { value: new THREE.Vector3() },
+    uSunDirection: { value: new THREE.Vector3() },
+    uSunShadowMap: { value: null },
+    uSunShadowMatrix: { value: new THREE.Matrix4() },
+    uTime: { value: 0 },
+    uAoStrength: { value: 0.0 },
+    uRayStrength: { value: 0.34 },
+    uRayTint: { value: new THREE.Vector3(1.25, 0.72, 0.34) },
+    uPlungeCenterZ: { value: -10.3 },
+    uForestMode: { value: 0.0 },
+  };
+  const halfResFxMat = new THREE.ShaderMaterial({
+    vertexShader: HALF_RES_MOBILE_FX_VERTEX,
+    fragmentShader: HALF_RES_MOBILE_FX_FRAGMENT,
+    uniforms: { ...halfResFxUniforms },
+    depthTest: false,
+    depthWrite: false,
+  });
+  halfResFxScene.add(new THREE.Mesh(halfResFxQuadGeo, halfResFxMat));
+
   const gtaoPass = new ShaderPass(GTAO_CONTACT_SHADER);
   if (gtaoPass.uniforms.uResolution) {
     gtaoPass.uniforms.uResolution.value = new THREE.Vector2(renderW, renderH);
   }
-  composer.addPass(gtaoPass);
-
   const godRaysPass = new ShaderPass(VOLUMETRIC_GODRAYS_SHADER);
-  composer.addPass(godRaysPass);
+  const halfResCompositePass = new ShaderPass(HALF_RES_FX_COMPOSITE_SHADER);
+
+  if (useHalfResMobileFx && halfResFxTarget) {
+    if (halfResCompositePass.uniforms.tHalfResFx) {
+      halfResCompositePass.uniforms.tHalfResFx.value = halfResFxTarget.texture;
+    }
+    composer.addPass(halfResCompositePass);
+  } else {
+    composer.addPass(gtaoPass);
+    composer.addPass(godRaysPass);
+  }
 
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(
@@ -411,24 +634,37 @@ export function createPostProcessing(options: {
       .normalize();
     rayTintVec.set(preset.godRayTint[0], preset.godRayTint[1], preset.godRayTint[2]);
 
-    if (gtaoPass.uniforms.uStrength) {
-      gtaoPass.uniforms.uStrength.value = !options.isSoftwareGpu && isForest ? 0.92 : 0.0;
+    const aoStrength = !options.isSoftwareGpu && isForest ? 0.92 : 0.0;
+    const rayStrength = options.isSoftwareGpu ? 0.0 : preset.godRayStrength;
+
+    if (useHalfResMobileFx) {
+      halfResFxUniforms.uSunDirection.value.copy(sunDirectionVec);
+      halfResFxUniforms.uRayTint.value.copy(rayTintVec);
+      halfResFxUniforms.uAoStrength.value = aoStrength;
+      halfResFxUniforms.uRayStrength.value = rayStrength;
+      halfResFxUniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
+      halfResFxUniforms.uForestMode.value = isForest ? 1.0 : 0.0;
+    } else {
+      if (gtaoPass.uniforms.uStrength) {
+        gtaoPass.uniforms.uStrength.value = aoStrength;
+      }
+      if (godRaysPass.uniforms.uSunDirection) {
+        godRaysPass.uniforms.uSunDirection.value = sunDirectionVec;
+      }
+      if (godRaysPass.uniforms.uRayStrength) {
+        godRaysPass.uniforms.uRayStrength.value = rayStrength;
+      }
+      if (godRaysPass.uniforms.uRayTint) {
+        godRaysPass.uniforms.uRayTint.value = rayTintVec;
+      }
+      if (godRaysPass.uniforms.uPlungeCenterZ) {
+        godRaysPass.uniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
+      }
+      if (godRaysPass.uniforms.uForestMode) {
+        godRaysPass.uniforms.uForestMode.value = isForest ? 1.0 : 0.0;
+      }
     }
-    if (godRaysPass.uniforms.uSunDirection) {
-      godRaysPass.uniforms.uSunDirection.value = sunDirectionVec;
-    }
-    if (godRaysPass.uniforms.uRayStrength) {
-      godRaysPass.uniforms.uRayStrength.value = options.isSoftwareGpu ? 0.0 : preset.godRayStrength;
-    }
-    if (godRaysPass.uniforms.uRayTint) {
-      godRaysPass.uniforms.uRayTint.value = rayTintVec;
-    }
-    if (godRaysPass.uniforms.uPlungeCenterZ) {
-      godRaysPass.uniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
-    }
-    if (godRaysPass.uniforms.uForestMode) {
-      godRaysPass.uniforms.uForestMode.value = isForest ? 1.0 : 0.0;
-    }
+
     if (gradePass.uniforms.uExposure) {
       gradePass.uniforms.uExposure.value = preset.exposure;
     }
@@ -449,37 +685,50 @@ export function createPostProcessing(options: {
       invProjection.copy(input.camera.projectionMatrixInverse);
       invView.copy(input.camera.matrixWorld);
 
-      if (gtaoPass.uniforms.tSceneDepth) {
-        gtaoPass.uniforms.tSceneDepth.value = input.sceneDepthTexture;
-      }
-      if (gtaoPass.uniforms.uInvProjection) {
-        gtaoPass.uniforms.uInvProjection.value = invProjection;
+      if (useHalfResMobileFx && halfResFxTarget) {
+        halfResFxUniforms.tSceneDepth.value = input.sceneDepthTexture;
+        halfResFxUniforms.uInvProjection.value.copy(invProjection);
+        halfResFxUniforms.uInvView.value.copy(invView);
+        halfResFxUniforms.uCameraPos.value.copy(input.camera.position);
+        halfResFxUniforms.uSunShadowMap.value = input.shadowMap;
+        halfResFxUniforms.uSunShadowMatrix.value.copy(input.shadowMatrix);
+        halfResFxUniforms.uTime.value = input.elapsedSeconds;
+
+        options.renderer.setRenderTarget(halfResFxTarget);
+        options.renderer.render(halfResFxScene, halfResFxCamera);
+      } else {
+        if (gtaoPass.uniforms.tSceneDepth) {
+          gtaoPass.uniforms.tSceneDepth.value = input.sceneDepthTexture;
+        }
+        if (gtaoPass.uniforms.uInvProjection) {
+          gtaoPass.uniforms.uInvProjection.value = invProjection;
+        }
+        if (godRaysPass.uniforms.tSceneDepth) {
+          godRaysPass.uniforms.tSceneDepth.value = input.sceneDepthTexture;
+        }
+        if (godRaysPass.uniforms.uInvProjection) {
+          godRaysPass.uniforms.uInvProjection.value = invProjection;
+        }
+        if (godRaysPass.uniforms.uInvView) {
+          godRaysPass.uniforms.uInvView.value = invView;
+        }
+        if (godRaysPass.uniforms.uCameraPos) {
+          godRaysPass.uniforms.uCameraPos.value = input.camera.position;
+        }
+        if (godRaysPass.uniforms.uSunShadowMap) {
+          godRaysPass.uniforms.uSunShadowMap.value = input.shadowMap;
+        }
+        if (godRaysPass.uniforms.uSunShadowMatrix) {
+          godRaysPass.uniforms.uSunShadowMatrix.value = input.shadowMatrix;
+        }
+        if (godRaysPass.uniforms.uShadowMapSize) {
+          godRaysPass.uniforms.uShadowMapSize.value = input.shadowMapSize;
+        }
+        if (godRaysPass.uniforms.uTime) {
+          godRaysPass.uniforms.uTime.value = input.elapsedSeconds;
+        }
       }
 
-      if (godRaysPass.uniforms.tSceneDepth) {
-        godRaysPass.uniforms.tSceneDepth.value = input.sceneDepthTexture;
-      }
-      if (godRaysPass.uniforms.uInvProjection) {
-        godRaysPass.uniforms.uInvProjection.value = invProjection;
-      }
-      if (godRaysPass.uniforms.uInvView) {
-        godRaysPass.uniforms.uInvView.value = invView;
-      }
-      if (godRaysPass.uniforms.uCameraPos) {
-        godRaysPass.uniforms.uCameraPos.value = input.camera.position;
-      }
-      if (godRaysPass.uniforms.uSunShadowMap) {
-        godRaysPass.uniforms.uSunShadowMap.value = input.shadowMap;
-      }
-      if (godRaysPass.uniforms.uSunShadowMatrix) {
-        godRaysPass.uniforms.uSunShadowMatrix.value = input.shadowMatrix;
-      }
-      if (godRaysPass.uniforms.uShadowMapSize) {
-        godRaysPass.uniforms.uShadowMapSize.value = input.shadowMapSize;
-      }
-      if (godRaysPass.uniforms.uTime) {
-        godRaysPass.uniforms.uTime.value = input.elapsedSeconds;
-      }
       if (gradePass.uniforms.uTime) {
         gradePass.uniforms.uTime.value = input.elapsedSeconds;
       }
@@ -491,6 +740,12 @@ export function createPostProcessing(options: {
       const nextRenderW = Math.max(1, Math.floor(size.width * pr));
       const nextRenderH = Math.max(1, Math.floor(size.height * pr));
       composer.setSize(size.width, size.height);
+      if (halfResFxTarget) {
+        const nextHalfW = Math.max(1, Math.floor(nextRenderW * 0.5));
+        const nextHalfH = Math.max(1, Math.floor(nextRenderH * 0.5));
+        halfResFxTarget.setSize(nextHalfW, nextHalfH);
+        halfResFxUniforms.uHalfResolution.value.set(nextHalfW, nextHalfH);
+      }
       if (gtaoPass.uniforms.uResolution?.value instanceof THREE.Vector2) {
         gtaoPass.uniforms.uResolution.value.set(nextRenderW, nextRenderH);
       }
@@ -501,6 +756,9 @@ export function createPostProcessing(options: {
       smaaPass.setSize(nextRenderW, nextRenderH);
     },
     dispose: () => {
+      halfResFxTarget?.dispose();
+      halfResFxQuadGeo.dispose();
+      halfResFxMat.dispose();
       renderTarget.dispose();
       bloomPass.dispose();
       smaaPass.dispose();

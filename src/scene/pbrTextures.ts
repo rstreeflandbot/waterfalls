@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp, createSeededRandom } from './cliffMath';
+import { WaterfallPresetId } from './waterfallPresets';
 
 export interface PbrTextureSet {
   readonly albedoMap: THREE.Texture;
@@ -8,16 +9,30 @@ export interface PbrTextureSet {
   readonly dispose: () => void;
 }
 
-export interface WaterfallTextureBundle {
+export interface IcelandTextureSets {
   readonly basalt: PbrTextureSet;
   readonly moss: PbrTextureSet;
   readonly volcanicSand: PbrTextureSet;
+}
+
+export interface ForestTextureSets {
   readonly forestCliff: PbrTextureSet;
   readonly forestMossyRock: PbrTextureSet;
   readonly forestFloor: PbrTextureSet;
   readonly forestBark: PbrTextureSet;
   readonly bridgeStone: PbrTextureSet;
+  readonly moss: PbrTextureSet;
+}
+
+export interface WaterfallTextureBundle {
   readonly waterfallFoam: THREE.DataTexture;
+  readonly ensureIcelandTextures: (
+    onItemLoaded?: (label: string) => void,
+  ) => Promise<IcelandTextureSets>;
+  readonly ensureForestTextures: (
+    onItemLoaded?: (label: string) => void,
+  ) => Promise<ForestTextureSets>;
+  readonly isBiomeCached: (presetId: WaterfallPresetId) => boolean;
   readonly dispose: () => void;
 }
 
@@ -36,38 +51,85 @@ function configureTexture(options: {
   return options.texture;
 }
 
+function loadTextureTracked(options: {
+  readonly loader: THREE.TextureLoader;
+  readonly url: string;
+  readonly isSrgb: boolean;
+  readonly anisotropy: number;
+  readonly label: string;
+  readonly onLoaded?: (label: string) => void;
+}): { readonly texture: THREE.Texture; readonly ready: Promise<void> } {
+  let resolveReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+
+  const texture = configureTexture({
+    texture: options.loader.load(
+      options.url,
+      () => {
+        options.onLoaded?.(options.label);
+        resolveReady();
+      },
+      undefined,
+      () => {
+        options.onLoaded?.(options.label);
+        resolveReady();
+      },
+    ),
+    isSrgb: options.isSrgb,
+    anisotropy: options.anisotropy,
+  });
+
+  return { texture, ready };
+}
+
 function createDirectScannedPbrSet(options: {
   readonly loader: THREE.TextureLoader;
   readonly albedoUrl: string;
   readonly normalUrl: string;
   readonly rmaUrl: string;
   readonly anisotropy: number;
-}): PbrTextureSet {
-  const albedoMap = configureTexture({
-    texture: options.loader.load(options.albedoUrl),
+  readonly label: string;
+  readonly onItemLoaded?: (label: string) => void;
+}): { readonly set: PbrTextureSet; readonly ready: Promise<void> } {
+  const albedo = loadTextureTracked({
+    loader: options.loader,
+    url: options.albedoUrl,
     isSrgb: true,
     anisotropy: options.anisotropy,
+    label: options.label,
+    onLoaded: options.onItemLoaded,
   });
-  const normalMap = configureTexture({
-    texture: options.loader.load(options.normalUrl),
+  const normal = loadTextureTracked({
+    loader: options.loader,
+    url: options.normalUrl,
     isSrgb: false,
     anisotropy: options.anisotropy,
+    label: options.label,
+    onLoaded: options.onItemLoaded,
   });
-  const rmaMap = configureTexture({
-    texture: options.loader.load(options.rmaUrl),
+  const rma = loadTextureTracked({
+    loader: options.loader,
+    url: options.rmaUrl,
     isSrgb: false,
     anisotropy: options.anisotropy,
+    label: options.label,
+    onLoaded: options.onItemLoaded,
   });
 
   return {
-    albedoMap,
-    normalMap,
-    rmaMap,
-    dispose: () => {
-      albedoMap.dispose();
-      normalMap.dispose();
-      rmaMap.dispose();
+    set: {
+      albedoMap: albedo.texture,
+      normalMap: normal.texture,
+      rmaMap: rma.texture,
+      dispose: () => {
+        albedo.texture.dispose();
+        normal.texture.dispose();
+        rma.texture.dispose();
+      },
     },
+    ready: Promise.all([albedo.ready, normal.ready, rma.ready]).then(() => undefined),
   };
 }
 
@@ -102,7 +164,8 @@ function createMossPbrSet(options: {
   readonly albedoUrl: string;
   readonly derivedSize: number;
   readonly anisotropy: number;
-}): PbrTextureSet {
+  readonly onItemLoaded?: (label: string) => void;
+}): { readonly set: PbrTextureSet; readonly ready: Promise<void> } {
   const normalCanvasPair = createFixedSizeCanvasTexture({
     size: options.derivedSize,
     fillStyle: 'rgb(128, 128, 255)',
@@ -115,104 +178,126 @@ function createMossPbrSet(options: {
   });
 
   let disposed = false;
+  let resolveReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
 
   const albedoMap = configureTexture({
-    texture: options.loader.load(options.albedoUrl, (loadedTexture) => {
-      if (disposed) {
-        return;
-      }
-      const imageSource = loadedTexture.image;
-      if (!(imageSource instanceof HTMLImageElement)) {
-        return;
-      }
-
-      const size = options.derivedSize;
-      const sampleCanvas = document.createElement('canvas');
-      sampleCanvas.width = size;
-      sampleCanvas.height = size;
-      const sampleCtx = sampleCanvas.getContext('2d');
-      const normalCtx = normalCanvasPair.canvas.getContext('2d');
-      const rmaCtx = rmaCanvasPair.canvas.getContext('2d');
-      if (!sampleCtx || !normalCtx || !rmaCtx) {
-        return;
-      }
-
-      sampleCtx.drawImage(imageSource, 0, 0, size, size);
-      const src = sampleCtx.getImageData(0, 0, size, size).data;
-      const heights = new Float32Array(size * size);
-
-      for (let i = 0; i < size * size; i++) {
-        const idx = i * 4;
-        const r = (src[idx] ?? 0) / 255;
-        const g = (src[idx + 1] ?? 0) / 255;
-        const b = (src[idx + 2] ?? 0) / 255;
-        heights[i] = r * 0.299 + g * 0.587 + b * 0.114;
-      }
-
-      const sampleHeight = (coords: { readonly x: number; readonly y: number }): number => {
-        const wx = ((coords.x % size) + size) % size;
-        const wy = ((coords.y % size) + size) % size;
-        return heights[wy * size + wx] ?? 0.5;
-      };
-
-      const normalImg = normalCtx.createImageData(size, size);
-      const rmaImg = rmaCtx.createImageData(size, size);
-      const nData = normalImg.data;
-      const rData = rmaImg.data;
-
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const hC = sampleHeight({ x, y });
-          const dx1 = sampleHeight({ x: x + 1, y }) - sampleHeight({ x: x - 1, y });
-          const dy1 = sampleHeight({ x, y: y + 1 }) - sampleHeight({ x, y: y - 1 });
-          const dx3 = sampleHeight({ x: x + 3, y }) - sampleHeight({ x: x - 3, y });
-          const dy3 = sampleHeight({ x, y: y + 3 }) - sampleHeight({ x, y: y - 3 });
-
-          const gx = (dx1 * 0.62 + dx3 * 0.38) * 3.8;
-          const gy = (dy1 * 0.62 + dy3 * 0.38) * 3.8;
-          const invLen = 1 / Math.hypot(gx, gy, 1.0);
-
-          const avg =
-            (sampleHeight({ x: x + 4, y }) +
-              sampleHeight({ x: x - 4, y }) +
-              sampleHeight({ x, y: y + 4 }) +
-              sampleHeight({ x, y: y - 4 })) *
-            0.25;
-          const ao = clamp({ value: 0.72 + (hC - avg) * 2.1, min: 0.32, max: 1.0 });
-          const rough = clamp({ value: 0.76 + (1 - hC) * 0.2, min: 0.7, max: 0.98 });
-
-          const idx = (y * size + x) * 4;
-          nData[idx] = Math.round((-gx * invLen * 0.5 + 0.5) * 255);
-          nData[idx + 1] = Math.round((-gy * invLen * 0.5 + 0.5) * 255);
-          nData[idx + 2] = Math.round((invLen * 0.5 + 0.5) * 255);
-          nData[idx + 3] = 255;
-
-          rData[idx] = Math.round(ao * 255);
-          rData[idx + 1] = Math.round(rough * 255);
-          rData[idx + 2] = Math.round(hC * 255);
-          rData[idx + 3] = 255;
+    texture: options.loader.load(
+      options.albedoUrl,
+      (loadedTexture) => {
+        if (disposed) {
+          resolveReady();
+          return;
         }
-      }
+        const imageSource = loadedTexture.image;
+        if (!(imageSource instanceof HTMLImageElement)) {
+          options.onItemLoaded?.('Loading moss textures');
+          resolveReady();
+          return;
+        }
 
-      normalCtx.putImageData(normalImg, 0, 0);
-      rmaCtx.putImageData(rmaImg, 0, 0);
-      normalCanvasPair.texture.needsUpdate = true;
-      rmaCanvasPair.texture.needsUpdate = true;
-    }),
+        const size = options.derivedSize;
+        const sampleCanvas = document.createElement('canvas');
+        sampleCanvas.width = size;
+        sampleCanvas.height = size;
+        const sampleCtx = sampleCanvas.getContext('2d');
+        const normalCtx = normalCanvasPair.canvas.getContext('2d');
+        const rmaCtx = rmaCanvasPair.canvas.getContext('2d');
+        if (!sampleCtx || !normalCtx || !rmaCtx) {
+          options.onItemLoaded?.('Loading moss textures');
+          resolveReady();
+          return;
+        }
+
+        sampleCtx.drawImage(imageSource, 0, 0, size, size);
+        const src = sampleCtx.getImageData(0, 0, size, size).data;
+        const heights = new Float32Array(size * size);
+
+        for (let i = 0; i < size * size; i++) {
+          const idx = i * 4;
+          const r = (src[idx] ?? 0) / 255;
+          const g = (src[idx + 1] ?? 0) / 255;
+          const b = (src[idx + 2] ?? 0) / 255;
+          heights[i] = r * 0.299 + g * 0.587 + b * 0.114;
+        }
+
+        const sampleHeight = (coords: { readonly x: number; readonly y: number }): number => {
+          const wx = ((coords.x % size) + size) % size;
+          const wy = ((coords.y % size) + size) % size;
+          return heights[wy * size + wx] ?? 0.5;
+        };
+
+        const normalImg = normalCtx.createImageData(size, size);
+        const rmaImg = rmaCtx.createImageData(size, size);
+        const nData = normalImg.data;
+        const rData = rmaImg.data;
+
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const hC = sampleHeight({ x, y });
+            const dx1 = sampleHeight({ x: x + 1, y }) - sampleHeight({ x: x - 1, y });
+            const dy1 = sampleHeight({ x, y: y + 1 }) - sampleHeight({ x, y: y - 1 });
+            const dx3 = sampleHeight({ x: x + 3, y }) - sampleHeight({ x: x - 3, y });
+            const dy3 = sampleHeight({ x, y: y + 3 }) - sampleHeight({ x, y: y - 3 });
+
+            const gx = (dx1 * 0.62 + dx3 * 0.38) * 3.8;
+            const gy = (dy1 * 0.62 + dy3 * 0.38) * 3.8;
+            const invLen = 1 / Math.hypot(gx, gy, 1.0);
+
+            const avg =
+              (sampleHeight({ x: x + 4, y }) +
+                sampleHeight({ x: x - 4, y }) +
+                sampleHeight({ x, y: y + 4 }) +
+                sampleHeight({ x, y: y - 4 })) *
+              0.25;
+            const ao = clamp({ value: 0.72 + (hC - avg) * 2.1, min: 0.32, max: 1.0 });
+            const rough = clamp({ value: 0.76 + (1 - hC) * 0.2, min: 0.7, max: 0.98 });
+
+            const idx = (y * size + x) * 4;
+            nData[idx] = Math.round((-gx * invLen * 0.5 + 0.5) * 255);
+            nData[idx + 1] = Math.round((-gy * invLen * 0.5 + 0.5) * 255);
+            nData[idx + 2] = Math.round((invLen * 0.5 + 0.5) * 255);
+            nData[idx + 3] = 255;
+
+            rData[idx] = Math.round(ao * 255);
+            rData[idx + 1] = Math.round(rough * 255);
+            rData[idx + 2] = Math.round(hC * 255);
+            rData[idx + 3] = 255;
+          }
+        }
+
+        normalCtx.putImageData(normalImg, 0, 0);
+        rmaCtx.putImageData(rmaImg, 0, 0);
+        normalCanvasPair.texture.needsUpdate = true;
+        rmaCanvasPair.texture.needsUpdate = true;
+        options.onItemLoaded?.('Loading moss textures');
+        resolveReady();
+      },
+      undefined,
+      () => {
+        options.onItemLoaded?.('Loading moss textures');
+        resolveReady();
+      },
+    ),
     isSrgb: true,
     anisotropy: options.anisotropy,
   });
 
   return {
-    albedoMap,
-    normalMap: normalCanvasPair.texture,
-    rmaMap: rmaCanvasPair.texture,
-    dispose: () => {
-      disposed = true;
-      albedoMap.dispose();
-      normalCanvasPair.texture.dispose();
-      rmaCanvasPair.texture.dispose();
+    set: {
+      albedoMap,
+      normalMap: normalCanvasPair.texture,
+      rmaMap: rmaCanvasPair.texture,
+      dispose: () => {
+        disposed = true;
+        albedoMap.dispose();
+        normalCanvasPair.texture.dispose();
+        rmaCanvasPair.texture.dispose();
+      },
     },
+    ready,
   };
 }
 
@@ -411,99 +496,170 @@ function createAnisotropicWaterfallFoamTexture(options: {
 export function createWaterfallTextureBundle(options: {
   readonly renderer: THREE.WebGLRenderer;
   readonly isSoftwareGpu: boolean;
+  readonly isMobileGpu: boolean;
 }): WaterfallTextureBundle {
   const anisotropy = options.isSoftwareGpu
     ? 2
-    : Math.min(16, options.renderer.capabilities.getMaxAnisotropy());
+    : options.isMobileGpu
+      ? Math.min(8, options.renderer.capabilities.getMaxAnisotropy())
+      : Math.min(16, options.renderer.capabilities.getMaxAnisotropy());
   const loader = new THREE.TextureLoader();
 
-  const basalt = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/basalt_albedo.jpg',
-    normalUrl: '/textures/basalt_normal.jpg',
-    rmaUrl: '/textures/basalt_rma.jpg',
-    anisotropy,
-  });
-
-  const moss = createMossPbrSet({
-    loader,
-    albedoUrl: '/textures/moss_albedo.jpg',
-    derivedSize: options.isSoftwareGpu ? 256 : 512,
-    anisotropy,
-  });
-
-  const volcanicSand = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/volcanic_sand_albedo.jpg',
-    normalUrl: '/textures/volcanic_sand_normal.jpg',
-    rmaUrl: '/textures/volcanic_sand_rma.jpg',
-    anisotropy,
-  });
-
-  const forestCliff = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/forest_cliff_albedo.jpg',
-    normalUrl: '/textures/forest_cliff_normal.jpg',
-    rmaUrl: '/textures/forest_cliff_rma.jpg',
-    anisotropy,
-  });
-
-  const forestMossyRock = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/forest_mossy_rock_albedo.jpg',
-    normalUrl: '/textures/forest_mossy_rock_normal.jpg',
-    rmaUrl: '/textures/forest_mossy_rock_rma.jpg',
-    anisotropy,
-  });
-
-  const forestFloor = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/forest_floor_albedo.jpg',
-    normalUrl: '/textures/forest_floor_normal.jpg',
-    rmaUrl: '/textures/forest_floor_rma.jpg',
-    anisotropy,
-  });
-
-  const forestBark = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/forest_bark_albedo.jpg',
-    normalUrl: '/textures/forest_bark_normal.jpg',
-    rmaUrl: '/textures/forest_bark_rma.jpg',
-    anisotropy,
-  });
-
-  const bridgeStone = createDirectScannedPbrSet({
-    loader,
-    albedoUrl: '/textures/bridge_stone_albedo.jpg',
-    normalUrl: '/textures/bridge_stone_normal.jpg',
-    rmaUrl: '/textures/bridge_stone_rma.jpg',
-    anisotropy,
-  });
-
   const waterfallFoam = createAnisotropicWaterfallFoamTexture({
-    size: options.isSoftwareGpu ? 256 : 512,
+    size: options.isSoftwareGpu ? 256 : options.isMobileGpu ? 384 : 512,
     anisotropy,
   });
+
+  const ownedSets: PbrTextureSet[] = [];
+  let mossPromise: Promise<PbrTextureSet> | null = null;
+  let icelandPromise: Promise<IcelandTextureSets> | null = null;
+  let forestPromise: Promise<ForestTextureSets> | null = null;
+  let icelandReady = false;
+  let forestReady = false;
+
+  const ensureMoss = (onItemLoaded?: (label: string) => void): Promise<PbrTextureSet> => {
+    if (!mossPromise) {
+      const mossEntry = createMossPbrSet({
+        loader,
+        albedoUrl: '/textures/moss_albedo.jpg',
+        derivedSize: options.isSoftwareGpu || options.isMobileGpu ? 256 : 512,
+        anisotropy,
+        onItemLoaded,
+      });
+      ownedSets.push(mossEntry.set);
+      mossPromise = mossEntry.ready.then(() => mossEntry.set);
+    }
+    return mossPromise;
+  };
+
+  const ensureIcelandTextures = (
+    onItemLoaded?: (label: string) => void,
+  ): Promise<IcelandTextureSets> => {
+    if (!icelandPromise) {
+      const basaltEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/basalt_albedo.jpg',
+        normalUrl: '/textures/basalt_normal.jpg',
+        rmaUrl: '/textures/basalt_rma.jpg',
+        anisotropy,
+        label: 'Loading volcanic basalt textures',
+        onItemLoaded,
+      });
+      const sandEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/volcanic_sand_albedo.jpg',
+        normalUrl: '/textures/volcanic_sand_normal.jpg',
+        rmaUrl: '/textures/volcanic_sand_rma.jpg',
+        anisotropy,
+        label: 'Loading riverbed stone textures',
+        onItemLoaded,
+      });
+      ownedSets.push(basaltEntry.set, sandEntry.set);
+
+      icelandPromise = Promise.all([
+        basaltEntry.ready,
+        sandEntry.ready,
+        ensureMoss(onItemLoaded),
+      ]).then(([, , moss]) => {
+        icelandReady = true;
+        return {
+          basalt: basaltEntry.set,
+          moss,
+          volcanicSand: sandEntry.set,
+        };
+      });
+    }
+    return icelandPromise;
+  };
+
+  const ensureForestTextures = (
+    onItemLoaded?: (label: string) => void,
+  ): Promise<ForestTextureSets> => {
+    if (!forestPromise) {
+      const cliffEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/forest_cliff_albedo.jpg',
+        normalUrl: '/textures/forest_cliff_normal.jpg',
+        rmaUrl: '/textures/forest_cliff_rma.jpg',
+        anisotropy,
+        label: 'Loading gorge cliff textures',
+        onItemLoaded,
+      });
+      const mossyRockEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/forest_mossy_rock_albedo.jpg',
+        normalUrl: '/textures/forest_mossy_rock_normal.jpg',
+        rmaUrl: '/textures/forest_mossy_rock_rma.jpg',
+        anisotropy,
+        label: 'Loading mossy canyon rock textures',
+        onItemLoaded,
+      });
+      const floorEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/forest_floor_albedo.jpg',
+        normalUrl: '/textures/forest_floor_normal.jpg',
+        rmaUrl: '/textures/forest_floor_rma.jpg',
+        anisotropy,
+        label: 'Loading autumn forest floor textures',
+        onItemLoaded,
+      });
+      const barkEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/forest_bark_albedo.jpg',
+        normalUrl: '/textures/forest_bark_normal.jpg',
+        rmaUrl: '/textures/forest_bark_rma.jpg',
+        anisotropy,
+        label: 'Loading tree bark textures',
+        onItemLoaded,
+      });
+      const bridgeEntry = createDirectScannedPbrSet({
+        loader,
+        albedoUrl: '/textures/bridge_stone_albedo.jpg',
+        normalUrl: '/textures/bridge_stone_normal.jpg',
+        rmaUrl: '/textures/bridge_stone_rma.jpg',
+        anisotropy,
+        label: 'Loading bridge masonry textures',
+        onItemLoaded,
+      });
+      ownedSets.push(
+        cliffEntry.set,
+        mossyRockEntry.set,
+        floorEntry.set,
+        barkEntry.set,
+        bridgeEntry.set,
+      );
+
+      forestPromise = Promise.all([
+        cliffEntry.ready,
+        mossyRockEntry.ready,
+        floorEntry.ready,
+        barkEntry.ready,
+        bridgeEntry.ready,
+        ensureMoss(onItemLoaded),
+      ]).then(([, , , , , moss]) => {
+        forestReady = true;
+        return {
+          forestCliff: cliffEntry.set,
+          forestMossyRock: mossyRockEntry.set,
+          forestFloor: floorEntry.set,
+          forestBark: barkEntry.set,
+          bridgeStone: bridgeEntry.set,
+          moss,
+        };
+      });
+    }
+    return forestPromise;
+  };
 
   return {
-    basalt,
-    moss,
-    volcanicSand,
-    forestCliff,
-    forestMossyRock,
-    forestFloor,
-    forestBark,
-    bridgeStone,
     waterfallFoam,
+    ensureIcelandTextures,
+    ensureForestTextures,
+    isBiomeCached: (presetId) => (presetId === 'forest' ? forestReady : icelandReady),
     dispose: () => {
-      basalt.dispose();
-      moss.dispose();
-      volcanicSand.dispose();
-      forestCliff.dispose();
-      forestMossyRock.dispose();
-      forestFloor.dispose();
-      forestBark.dispose();
-      bridgeStone.dispose();
+      for (const set of ownedSets) {
+        set.dispose();
+      }
       waterfallFoam.dispose();
     },
   };
