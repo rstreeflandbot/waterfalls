@@ -247,8 +247,13 @@ export function createWaterfallScene(container: HTMLElement): WaterfallSceneCont
     if (presetId === 'forest') {
       forestVegetation = createForestVegetation({
         preset,
+        textures,
+        anisotropy: maxAnisotropy,
         isSoftwareGpu,
         fallbackShadowTexture: fallbackTexture,
+        onStaticGeometryChanged: () => {
+          shadowRefreshNeeded = true;
+        },
       });
       scene.add(forestVegetation.group);
     } else {

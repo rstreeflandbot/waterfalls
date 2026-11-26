@@ -12,6 +12,11 @@ export interface WaterfallTextureBundle {
   readonly basalt: PbrTextureSet;
   readonly moss: PbrTextureSet;
   readonly volcanicSand: PbrTextureSet;
+  readonly forestCliff: PbrTextureSet;
+  readonly forestMossyRock: PbrTextureSet;
+  readonly forestFloor: PbrTextureSet;
+  readonly forestBark: PbrTextureSet;
+  readonly bridgeStone: PbrTextureSet;
   readonly waterfallFoam: THREE.DataTexture;
   readonly dispose: () => void;
 }
@@ -435,6 +440,46 @@ export function createWaterfallTextureBundle(options: {
     anisotropy,
   });
 
+  const forestCliff = createDirectScannedPbrSet({
+    loader,
+    albedoUrl: '/textures/forest_cliff_albedo.jpg',
+    normalUrl: '/textures/forest_cliff_normal.jpg',
+    rmaUrl: '/textures/forest_cliff_rma.jpg',
+    anisotropy,
+  });
+
+  const forestMossyRock = createDirectScannedPbrSet({
+    loader,
+    albedoUrl: '/textures/forest_mossy_rock_albedo.jpg',
+    normalUrl: '/textures/forest_mossy_rock_normal.jpg',
+    rmaUrl: '/textures/forest_mossy_rock_rma.jpg',
+    anisotropy,
+  });
+
+  const forestFloor = createDirectScannedPbrSet({
+    loader,
+    albedoUrl: '/textures/forest_floor_albedo.jpg',
+    normalUrl: '/textures/forest_floor_normal.jpg',
+    rmaUrl: '/textures/forest_floor_rma.jpg',
+    anisotropy,
+  });
+
+  const forestBark = createDirectScannedPbrSet({
+    loader,
+    albedoUrl: '/textures/forest_bark_albedo.jpg',
+    normalUrl: '/textures/forest_bark_normal.jpg',
+    rmaUrl: '/textures/forest_bark_rma.jpg',
+    anisotropy,
+  });
+
+  const bridgeStone = createDirectScannedPbrSet({
+    loader,
+    albedoUrl: '/textures/bridge_stone_albedo.jpg',
+    normalUrl: '/textures/bridge_stone_normal.jpg',
+    rmaUrl: '/textures/bridge_stone_rma.jpg',
+    anisotropy,
+  });
+
   const waterfallFoam = createAnisotropicWaterfallFoamTexture({
     size: options.isSoftwareGpu ? 256 : 512,
     anisotropy,
@@ -444,11 +489,21 @@ export function createWaterfallTextureBundle(options: {
     basalt,
     moss,
     volcanicSand,
+    forestCliff,
+    forestMossyRock,
+    forestFloor,
+    forestBark,
+    bridgeStone,
     waterfallFoam,
     dispose: () => {
       basalt.dispose();
       moss.dispose();
       volcanicSand.dispose();
+      forestCliff.dispose();
+      forestMossyRock.dispose();
+      forestFloor.dispose();
+      forestBark.dispose();
+      bridgeStone.dispose();
       waterfallFoam.dispose();
     },
   };
