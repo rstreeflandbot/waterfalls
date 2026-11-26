@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SCENE_CONFIG } from './cliffMath';
+import { WaterfallPresetConfig } from './waterfallPresets';
 
 const SKY_VERTEX_SHADER = /* glsl */ `
 varying vec3 vWorldDirection;
@@ -15,6 +15,15 @@ const SKY_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDirection;
 uniform sampler2D uNoiseTex;
+uniform vec3 uZenithColor;
+uniform vec3 uMidSkyColor;
+uniform vec3 uHorizonCool;
+uniform vec3 uHorizonWarm;
+uniform vec3 uCloudShadow;
+uniform vec3 uCloudMid;
+uniform vec3 uCloudSunRim;
+uniform vec3 uLowerMistCool;
+uniform vec3 uLowerMistWarm;
 
 varying vec3 vWorldDirection;
 
@@ -24,25 +33,20 @@ void main() {
   float elevation = clamp(dir.y, -0.25, 1.0);
   float horizonFactor = pow(1.0 - clamp(elevation, 0.0, 1.0), 3.3);
 
-  vec3 zenithColor = vec3(0.055, 0.085, 0.14);
-  vec3 midSkyColor = vec3(0.16, 0.21, 0.30);
-  vec3 horizonCool = vec3(0.35, 0.37, 0.43);
-  vec3 horizonWarm = vec3(0.98, 0.56, 0.27);
-
   float sunAlignment = max(dot(dir, sunDir), 0.0);
   vec2 flatDir = normalize(dir.xz + vec2(0.0001));
   vec2 flatSun = normalize(sunDir.xz + vec2(0.0001));
   float warmAzimuth = pow(max(dot(flatDir, flatSun), 0.0), 2.1);
 
-  vec3 skyColor = mix(midSkyColor, zenithColor, smoothstep(0.05, 0.72, elevation));
-  vec3 blendedHorizon = mix(horizonCool, horizonWarm, 0.35 + 0.65 * warmAzimuth);
+  vec3 skyColor = mix(uMidSkyColor, uZenithColor, smoothstep(0.05, 0.72, elevation));
+  vec3 blendedHorizon = mix(uHorizonCool, uHorizonWarm, 0.35 + 0.65 * warmAzimuth);
   skyColor = mix(skyColor, blendedHorizon, horizonFactor);
 
   float mieGlow = pow(sunAlignment, 6.0) * 0.58 + pow(sunAlignment, 28.0) * 0.98;
-  skyColor += vec3(1.05, 0.65, 0.34) * mieGlow * smoothstep(-0.08, 0.25, elevation);
+  skyColor += uCloudSunRim * 0.85 * mieGlow * smoothstep(-0.08, 0.25, elevation);
 
   float sunDisc = smoothstep(0.9990, 0.9997, sunAlignment);
-  skyColor += vec3(2.8, 1.9, 1.1) * sunDisc;
+  skyColor += vec3(2.8, 1.95, 1.2) * sunDisc;
 
   if (elevation > 0.01) {
     vec2 cloudUv = dir.xz / (elevation + 0.24) * 0.14;
@@ -60,19 +64,15 @@ void main() {
 
     float edgeLight = clamp(sampleA.a - sampleLit.a + 0.28, 0.0, 1.0);
 
-    vec3 cloudShadow = vec3(0.085, 0.105, 0.145);
-    vec3 cloudMid = vec3(0.24, 0.27, 0.33);
-    vec3 cloudSunRim = vec3(1.22, 0.66, 0.32);
-
-    vec3 cloudColor = mix(cloudShadow, cloudMid, smoothstep(0.12, 0.85, edgeLight));
+    vec3 cloudColor = mix(uCloudShadow, uCloudMid, smoothstep(0.12, 0.85, edgeLight));
     float goldenUnderlight = pow(sunAlignment, 2.4) * (0.45 + 0.55 * (1.0 - cloudDensity * 0.6));
-    cloudColor = mix(cloudColor, cloudSunRim, clamp(goldenUnderlight * (0.58 + edgeLight * 0.72), 0.0, 0.94));
+    cloudColor = mix(cloudColor, uCloudSunRim, clamp(goldenUnderlight * (0.58 + edgeLight * 0.72), 0.0, 0.94));
 
-    skyColor = mix(skyColor, cloudColor, cloudDensity * 0.88);
+    skyColor = mix(skyColor, cloudColor, cloudDensity * 0.86);
   }
 
   float lowerFog = smoothstep(0.06, -0.14, elevation);
-  vec3 canyonMistColor = mix(vec3(0.12, 0.15, 0.19), vec3(0.32, 0.24, 0.20), warmAzimuth * 0.6);
+  vec3 canyonMistColor = mix(uLowerMistCool, uLowerMistWarm, warmAzimuth * 0.6);
   skyColor = mix(skyColor, canyonMistColor, lowerFog);
 
   gl_FragColor = vec4(skyColor, 1.0);
@@ -89,17 +89,41 @@ export interface SkySystem {
 export function createIcelandicSky(options: {
   readonly renderer: THREE.WebGLRenderer;
   readonly noiseTexture: THREE.DataTexture;
+  readonly preset: WaterfallPresetConfig;
 }): SkySystem {
+  const { preset } = options;
   const sunDir = new THREE.Vector3(
-    SCENE_CONFIG.sunDirection.x,
-    SCENE_CONFIG.sunDirection.y,
-    SCENE_CONFIG.sunDirection.z,
+    preset.sunDirection.x,
+    preset.sunDirection.y,
+    preset.sunDirection.z,
   ).normalize();
 
+  const p = preset.skyPalette;
   const uniforms = {
     uTime: { value: 0 },
     uSunDirection: { value: sunDir },
     uNoiseTex: { value: options.noiseTexture },
+    uZenithColor: { value: new THREE.Vector3(p.zenith[0], p.zenith[1], p.zenith[2]) },
+    uMidSkyColor: { value: new THREE.Vector3(p.midSky[0], p.midSky[1], p.midSky[2]) },
+    uHorizonCool: {
+      value: new THREE.Vector3(p.horizonCool[0], p.horizonCool[1], p.horizonCool[2]),
+    },
+    uHorizonWarm: {
+      value: new THREE.Vector3(p.horizonWarm[0], p.horizonWarm[1], p.horizonWarm[2]),
+    },
+    uCloudShadow: {
+      value: new THREE.Vector3(p.cloudShadow[0], p.cloudShadow[1], p.cloudShadow[2]),
+    },
+    uCloudMid: { value: new THREE.Vector3(p.cloudMid[0], p.cloudMid[1], p.cloudMid[2]) },
+    uCloudSunRim: {
+      value: new THREE.Vector3(p.cloudSunRim[0], p.cloudSunRim[1], p.cloudSunRim[2]),
+    },
+    uLowerMistCool: {
+      value: new THREE.Vector3(p.lowerMistCool[0], p.lowerMistCool[1], p.lowerMistCool[2]),
+    },
+    uLowerMistWarm: {
+      value: new THREE.Vector3(p.lowerMistWarm[0], p.lowerMistWarm[1], p.lowerMistWarm[2]),
+    },
   };
 
   const geometry = new THREE.SphereGeometry(240, 40, 28);

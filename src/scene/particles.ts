@@ -6,6 +6,8 @@ import {
   SPRAY_STREAK_VERTEX_SHADER,
 } from '../shaders/particleShaders';
 import { SCENE_CONFIG, createSeededRandom } from './cliffMath';
+import { FOREST_WATERFALL_CONFIG } from './forestCanyonMath';
+import { WaterfallPresetConfig } from './waterfallPresets';
 
 export interface ParticleSystem {
   readonly group: THREE.Group;
@@ -181,6 +183,10 @@ function createSplashStreaks(options: {
   readonly count: number;
   readonly sunDirection: THREE.Vector3;
   readonly fallbackTexture: THREE.Texture;
+  readonly plungeCenterZ: number;
+  readonly crestZ: number;
+  readonly crestHeight: number;
+  readonly plungeWidth: number;
 }): {
   readonly mesh: THREE.Mesh;
   readonly uniforms: StreakUniforms;
@@ -199,9 +205,9 @@ function createSplashStreaks(options: {
 
     if (isCurtainShed) {
       const heightRatio = rand();
-      origins[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 0.9;
-      origins[i3 + 1] = 2.5 + heightRatio * (SCENE_CONFIG.crestHeight - 4.0);
-      origins[i3 + 2] = SCENE_CONFIG.crestZ + 1.5 + (1 - heightRatio) * 3.1 + (rand() - 0.5) * 1.0;
+      origins[i3] = (rand() - 0.5) * options.plungeWidth * 0.9;
+      origins[i3 + 1] = 2.5 + heightRatio * (options.crestHeight - 4.0);
+      origins[i3 + 2] = options.crestZ + 1.5 + (1 - heightRatio) * 3.1 + (rand() - 0.5) * 1.0;
 
       velocities[i3] = (rand() - 0.5) * 1.9;
       velocities[i3 + 1] = -2.2 - rand() * 3.2;
@@ -212,9 +218,9 @@ function createSplashStreaks(options: {
       params[i3 + 2] = 0.6 + rand() * 0.9;
     } else {
       const angle = (rand() - 0.5) * Math.PI * 1.15;
-      origins[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 1.0;
+      origins[i3] = (rand() - 0.5) * options.plungeWidth * 1.0;
       origins[i3 + 1] = 0.2 + rand() * 0.9;
-      origins[i3 + 2] = SCENE_CONFIG.plungeCenterZ + 0.5 + (rand() - 0.5) * 2.4;
+      origins[i3 + 2] = options.plungeCenterZ + 0.5 + (rand() - 0.5) * 2.4;
 
       const launchSpeed = 2.8 + rand() * 5.2;
       velocities[i3] = Math.sin(angle) * launchSpeed * 0.85;
@@ -271,13 +277,17 @@ export function createWaterfallParticles(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly fallbackTexture: THREE.Texture;
   readonly reducedOverdraw: boolean;
+  readonly preset: WaterfallPresetConfig;
 }): ParticleSystem {
   const group = new THREE.Group();
+  const isForest = options.preset.id === 'forest';
   const sunDirection = new THREE.Vector3(
-    SCENE_CONFIG.sunDirection.x,
-    SCENE_CONFIG.sunDirection.y,
-    SCENE_CONFIG.sunDirection.z,
+    options.preset.sunDirection.x,
+    options.preset.sunDirection.y,
+    options.preset.sunDirection.z,
   ).normalize();
+
+  const plungeZ = options.preset.waterStyle.plungeCenterZ;
 
   const plungeBoilMist = createMistLayer({
     sunDirection,
@@ -286,20 +296,20 @@ export function createWaterfallParticles(options: {
     config: {
       count: options.reducedOverdraw ? 42 : 68,
       seed: 10101,
-      opacityScale: 0.34,
+      opacityScale: isForest ? 0.36 : 0.34,
       minScale: 2.8,
-      maxScale: 5.4,
+      maxScale: 5.5,
       minDuration: 2.8,
       maxDuration: 5.2,
       spawnSpreadX: 6.2,
       spawnMinY: 0.1,
       spawnMaxY: 1.5,
-      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 0.9,
+      spawnCenterZ: plungeZ + 0.9,
       spawnSpreadZ: 1.8,
       driftForwardMin: 1.8,
-      driftForwardMax: 5.8,
-      driftUpMin: 2.4,
-      driftUpMax: 6.4,
+      driftForwardMax: 6.0,
+      driftUpMin: 2.5,
+      driftUpMax: 6.6,
       driftSideSpread: 3.8,
       renderOrder: 6,
     },
@@ -310,38 +320,72 @@ export function createWaterfallParticles(options: {
     noiseTexture: options.noiseTexture,
     fallbackTexture: options.fallbackTexture,
     config: {
-      count: options.reducedOverdraw ? 28 : 44,
+      count: options.reducedOverdraw ? 28 : 48,
       seed: 20202,
-      opacityScale: 0.16,
+      opacityScale: isForest ? 0.2 : 0.16,
       minScale: 6.2,
-      maxScale: 11.2,
+      maxScale: 11.6,
       minDuration: 6.8,
       maxDuration: 11.8,
-      spawnSpreadX: 8.2,
+      spawnSpreadX: 8.6,
       spawnMinY: 0.8,
-      spawnMaxY: 3.8,
-      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 2.8,
+      spawnMaxY: 4.2,
+      spawnCenterZ: plungeZ + 2.8,
       spawnSpreadZ: 3.0,
       driftForwardMin: 3.8,
       driftForwardMax: 10.5,
-      driftUpMin: 3.2,
-      driftUpMax: 8.8,
+      driftUpMin: 3.4,
+      driftUpMax: 9.2,
       driftSideSpread: 6.8,
       renderOrder: 7,
     },
   });
 
+  const mistLayers = [plungeBoilMist, risingVaporPlumes];
+
+  if (isForest) {
+    const midShelfMist = createMistLayer({
+      sunDirection,
+      noiseTexture: options.noiseTexture,
+      fallbackTexture: options.fallbackTexture,
+      config: {
+        count: options.reducedOverdraw ? 20 : 34,
+        seed: 30303,
+        opacityScale: 0.3,
+        minScale: 2.4,
+        maxScale: 4.8,
+        minDuration: 3.0,
+        maxDuration: 5.5,
+        spawnSpreadX: 4.4,
+        spawnMinY: FOREST_WATERFALL_CONFIG.midShelfHeight - 0.6,
+        spawnMaxY: FOREST_WATERFALL_CONFIG.midShelfHeight + 1.0,
+        spawnCenterZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.6,
+        spawnSpreadZ: 1.4,
+        driftForwardMin: 1.8,
+        driftForwardMax: 5.2,
+        driftUpMin: 1.6,
+        driftUpMax: 4.8,
+        driftSideSpread: 3.2,
+        renderOrder: 6,
+      },
+    });
+    mistLayers.push(midShelfMist);
+  }
+
+  for (const layer of mistLayers) {
+    group.add(layer.mesh);
+  }
+
   const streaks = createSplashStreaks({
     count: options.reducedOverdraw ? 650 : 1200,
     sunDirection,
     fallbackTexture: options.fallbackTexture,
+    plungeCenterZ: plungeZ,
+    crestZ: isForest ? FOREST_WATERFALL_CONFIG.midShelfZ : SCENE_CONFIG.crestZ,
+    crestHeight: isForest ? FOREST_WATERFALL_CONFIG.upperCrestHeight : SCENE_CONFIG.crestHeight,
+    plungeWidth: isForest ? FOREST_WATERFALL_CONFIG.lowerWidthBottom : SCENE_CONFIG.plungeWidth,
   });
-
-  group.add(plungeBoilMist.mesh);
-  group.add(risingVaporPlumes.mesh);
   group.add(streaks.mesh);
-
-  const mistLayers = [plungeBoilMist, risingVaporPlumes];
 
   return {
     group,

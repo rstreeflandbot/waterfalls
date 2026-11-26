@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Vec3Tuple } from './cliffMath';
 
 export interface CameraController {
   readonly update: (input: {
     readonly elapsedSeconds: number;
     readonly deltaSeconds: number;
+  }) => void;
+  readonly setHeroPose: (pose: {
+    readonly position: Vec3Tuple;
+    readonly target: Vec3Tuple;
+    readonly immediate: boolean;
   }) => void;
   readonly isDriftEnabled: () => boolean;
   readonly setDriftEnabled: (enabled: boolean) => void;
@@ -12,17 +18,27 @@ export interface CameraController {
   readonly dispose: () => void;
 }
 
-const HERO_CAMERA_TARGET = new THREE.Vector3(-0.3, 10.4, -12.4);
-const HERO_CAMERA_POSITION = new THREE.Vector3(21.3, 11.8, 47.7);
-
 export function createCameraController(options: {
   readonly camera: THREE.PerspectiveCamera;
   readonly domElement: HTMLElement;
+  readonly initialPosition: Vec3Tuple;
+  readonly initialTarget: Vec3Tuple;
 }): CameraController {
-  options.camera.position.copy(HERO_CAMERA_POSITION);
+  const heroPosition = new THREE.Vector3(
+    options.initialPosition.x,
+    options.initialPosition.y,
+    options.initialPosition.z,
+  );
+  const heroTarget = new THREE.Vector3(
+    options.initialTarget.x,
+    options.initialTarget.y,
+    options.initialTarget.z,
+  );
+
+  options.camera.position.copy(heroPosition);
 
   const controls = new OrbitControls(options.camera, options.domElement);
-  controls.target.copy(HERO_CAMERA_TARGET);
+  controls.target.copy(heroTarget);
   controls.enableDamping = true;
   controls.dampingFactor = 0.045;
   controls.enablePan = false;
@@ -67,8 +83,8 @@ export function createCameraController(options: {
       if (resetProgress < 1.0) {
         resetProgress = Math.min(1.0, resetProgress + clampedDelta * 1.15);
         const eased = 1 - Math.pow(1 - resetProgress, 3);
-        options.camera.position.lerpVectors(resetStartPos, HERO_CAMERA_POSITION, eased);
-        controls.target.lerpVectors(resetStartTarget, HERO_CAMERA_TARGET, eased);
+        options.camera.position.lerpVectors(resetStartPos, heroPosition, eased);
+        controls.target.lerpVectors(resetStartTarget, heroTarget, eased);
       } else if (driftEnabled && !userDragging) {
         idleSeconds += clampedDelta;
         const driftBlend = Math.min(1, Math.max(0, (idleSeconds - 1.5) / 2.5));
@@ -101,6 +117,21 @@ export function createCameraController(options: {
       }
 
       controls.update();
+    },
+    setHeroPose: (pose) => {
+      heroPosition.set(pose.position.x, pose.position.y, pose.position.z);
+      heroTarget.set(pose.target.x, pose.target.y, pose.target.z);
+      if (pose.immediate) {
+        options.camera.position.copy(heroPosition);
+        controls.target.copy(heroTarget);
+        resetProgress = 1.0;
+        controls.update();
+      } else {
+        resetStartPos.copy(options.camera.position);
+        resetStartTarget.copy(controls.target);
+        resetProgress = 0;
+        idleSeconds = 0;
+      }
     },
     isDriftEnabled: () => driftEnabled,
     setDriftEnabled: (enabled: boolean) => {

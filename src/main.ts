@@ -25,7 +25,9 @@ function bootstrap(): void {
   const audioController = createWaterfallAudio();
   const hudController = createHud({
     container: hudRoot,
+    initialPreset: sceneController.getPreset(),
     callbacks: {
+      onSwitchWaterfall: () => sceneController.switchWaterfall(),
       onToggleSound: () => audioController.toggle(),
       onToggleDrift: () => sceneController.toggleDrift(),
       onResetView: () => sceneController.resetCameraView(),

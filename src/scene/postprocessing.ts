@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SHARED_ATMOS_AND_SHADOW_GLSL } from '../shaders/sharedShaderGlsl';
-import { SCENE_CONFIG } from './cliffMath';
+import { WaterfallPresetConfig } from './waterfallPresets';
 
 const VOLUMETRIC_GODRAYS_SHADER = {
   uniforms: {
@@ -18,6 +18,8 @@ const VOLUMETRIC_GODRAYS_SHADER = {
     uShadowMapSize: { value: 1024 },
     uTime: { value: 0 },
     uRayStrength: { value: 0.34 },
+    uRayTint: { value: new THREE.Vector3(1.25, 0.72, 0.34) },
+    uPlungeCenterZ: { value: -10.3 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -38,6 +40,8 @@ const VOLUMETRIC_GODRAYS_SHADER = {
     uniform float uShadowMapSize;
     uniform float uTime;
     uniform float uRayStrength;
+    uniform vec3 uRayTint;
+    uniform float uPlungeCenterZ;
 
     varying vec2 vUv;
 
@@ -61,7 +65,7 @@ const VOLUMETRIC_GODRAYS_SHADER = {
       vec3 worldPos = reconstructWorldPos(vUv, rawDepth);
 
       vec3 rayVec = worldPos - uCameraPos;
-      float maxDist = min(length(rayVec), 64.0);
+      float maxDist = min(length(rayVec), 68.0);
       vec3 rayDir = rayVec / max(length(rayVec), 0.0001);
       vec3 sunDir = normalize(uSunDirection);
 
@@ -94,12 +98,12 @@ const VOLUMETRIC_GODRAYS_SHADER = {
           }
         }
 
-        float plungeDist = length(samplePos.xz - vec2(0.0, -10.3));
-        float valleyMist = exp(-max(samplePos.y, 0.0) * 0.075) * (0.35 + 1.15 * exp(-plungeDist * 0.06));
+        float plungeDist = length(samplePos.xz - vec2(0.0, uPlungeCenterZ));
+        float valleyMist = exp(-max(samplePos.y, 0.0) * 0.068) * (0.35 + 1.2 * exp(-plungeDist * 0.055));
         scatterAccum += inLight * valleyMist * stepLen * 0.016;
       }
 
-      vec3 sunShaftColor = vec3(1.25, 0.72, 0.34) * scatterAccum * phaseWeight * uRayStrength;
+      vec3 sunShaftColor = uRayTint * scatterAccum * phaseWeight * uRayStrength;
       gl_FragColor = vec4(baseColor.rgb + sunShaftColor, baseColor.a);
     }
   `,
@@ -216,6 +220,7 @@ const SOURCE_TEXTURE_COPY_SHADER = {
 };
 
 export interface PostProcessingSystem {
+  readonly applyPreset: (preset: WaterfallPresetConfig) => void;
   readonly render: (input: {
     readonly elapsedSeconds: number;
     readonly sourceColorTexture: THREE.Texture;
@@ -234,6 +239,7 @@ export function createPostProcessing(options: {
   readonly width: number;
   readonly height: number;
   readonly isSoftwareGpu: boolean;
+  readonly preset: WaterfallPresetConfig;
 }): PostProcessingSystem {
   const renderTarget = new THREE.WebGLRenderTarget(options.width, options.height, {
     type: THREE.HalfFloatType,
@@ -246,17 +252,6 @@ export function createPostProcessing(options: {
   composer.addPass(sourcePass);
 
   const godRaysPass = new ShaderPass(VOLUMETRIC_GODRAYS_SHADER);
-  const sunDir = new THREE.Vector3(
-    SCENE_CONFIG.sunDirection.x,
-    SCENE_CONFIG.sunDirection.y,
-    SCENE_CONFIG.sunDirection.z,
-  ).normalize();
-  if (godRaysPass.uniforms.uSunDirection) {
-    godRaysPass.uniforms.uSunDirection.value = sunDir;
-  }
-  if (godRaysPass.uniforms.uRayStrength) {
-    godRaysPass.uniforms.uRayStrength.value = options.isSoftwareGpu ? 0.0 : 0.34;
-  }
   composer.addPass(godRaysPass);
 
   const bloomPass = new UnrealBloomPass(
@@ -275,8 +270,33 @@ export function createPostProcessing(options: {
 
   const invProjection = new THREE.Matrix4();
   const invView = new THREE.Matrix4();
+  const sunDirectionVec = new THREE.Vector3();
+  const rayTintVec = new THREE.Vector3();
+
+  const applyPreset = (preset: WaterfallPresetConfig) => {
+    sunDirectionVec
+      .set(preset.sunDirection.x, preset.sunDirection.y, preset.sunDirection.z)
+      .normalize();
+    rayTintVec.set(preset.godRayTint[0], preset.godRayTint[1], preset.godRayTint[2]);
+
+    if (godRaysPass.uniforms.uSunDirection) {
+      godRaysPass.uniforms.uSunDirection.value = sunDirectionVec;
+    }
+    if (godRaysPass.uniforms.uRayStrength) {
+      godRaysPass.uniforms.uRayStrength.value = options.isSoftwareGpu ? 0.0 : preset.godRayStrength;
+    }
+    if (godRaysPass.uniforms.uRayTint) {
+      godRaysPass.uniforms.uRayTint.value = rayTintVec;
+    }
+    if (godRaysPass.uniforms.uPlungeCenterZ) {
+      godRaysPass.uniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
+    }
+  };
+
+  applyPreset(options.preset);
 
   return {
+    applyPreset,
     render: (input) => {
       if (sourcePass.uniforms.tSource) {
         sourcePass.uniforms.tSource.value = input.sourceColorTexture;

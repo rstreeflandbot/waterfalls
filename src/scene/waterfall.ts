@@ -10,6 +10,13 @@ import {
   computeParabolicFallPoint,
   computeWaterfallCrestHeight,
 } from './cliffMath';
+import {
+  FOREST_WATERFALL_CONFIG,
+  computeForestEscarpmentZ,
+  computeForestMidShelfY,
+  computeForestUpperCrestY,
+} from './forestCanyonMath';
+import { WaterfallPresetConfig } from './waterfallPresets';
 
 export interface WaterfallSystem {
   readonly group: THREE.Group;
@@ -69,7 +76,7 @@ function evaluateAsymmetricChuteProfile(u: number): {
   };
 }
 
-function createSculptedMainWaterfallGeometry(): THREE.BufferGeometry {
+function createIcelandMainWaterfallGeometry(): THREE.BufferGeometry {
   const widthSegments = 112;
   const heightSegments = 96;
   const geometry = new THREE.PlaneGeometry(1, 1, widthSegments, heightSegments);
@@ -146,11 +153,93 @@ function createSculptedMainWaterfallGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
+function createForestTierGeometry(options: {
+  readonly widthTop: number;
+  readonly widthBottom: number;
+  readonly startYFn: (x: number) => number;
+  readonly endY: number;
+  readonly startZFn: (x: number) => number;
+  readonly forwardReach: number;
+  readonly centerShiftX: number;
+  readonly hasLipUpstream: boolean;
+}): THREE.BufferGeometry {
+  const geometry = new THREE.PlaneGeometry(1, 1, 92, 72);
+  const posAttr = geometry.attributes.position;
+  const uvAttr = geometry.attributes.uv;
+
+  if (!posAttr || !uvAttr) {
+    return geometry;
+  }
+
+  const chuteMasks = new Float32Array(posAttr.count);
+  const lipTransition = options.hasLipUpstream ? 0.16 : 0.08;
+
+  for (let i = 0; i < posAttr.count; i++) {
+    const u = uvAttr.getX(i);
+    const v = uvAttr.getY(i);
+    const progress = 1 - v;
+    const centeredU = (u - 0.5) * 2;
+    const profile = evaluateAsymmetricChuteProfile(u);
+
+    const width =
+      options.widthTop +
+      (options.widthBottom - options.widthTop) * Math.pow(progress, 0.84) +
+      Math.sin(progress * Math.PI * 1.5 + centeredU * 1.6) * 0.45 * progress;
+    const x =
+      options.centerShiftX +
+      centeredU * (width * 0.5) +
+      Math.sin(progress * 2.9 + options.centerShiftX) * 0.24 * progress;
+
+    const startZ = options.startZFn(x);
+    const crestY = options.startYFn(x);
+    const sideWrapBack = Math.pow(Math.abs(centeredU), 2.3) * 1.85;
+
+    let y: number;
+    let z: number;
+
+    if (progress < lipTransition) {
+      const lipT = progress / lipTransition;
+      const curvedDrop = Math.pow(lipT, 2.2) * 0.85;
+      y = crestY + 0.08 - curvedDrop;
+      const upstreamLen = options.hasLipUpstream ? 4.4 : 2.1;
+      z =
+        startZ -
+        upstreamLen +
+        lipT * (upstreamLen + 0.55) +
+        (profile.forwardBoost * 0.22 - sideWrapBack * 0.4) * lipT;
+    } else {
+      const fallT = (progress - lipTransition) / (1 - lipTransition);
+      const point = computeParabolicFallPoint({
+        progress: fallT,
+        startY: crestY - 0.77,
+        endY: options.endY,
+        startZ: startZ + 0.55,
+        forwardReach: options.forwardReach + profile.forwardBoost * 0.72,
+      });
+
+      const flutter =
+        Math.sin(x * 1.25 + fallT * 5.0) * 0.2 * fallT +
+        Math.cos(x * 2.4 - fallT * 3.6) * 0.12 * fallT;
+      y = point.y;
+      z = point.z + flutter - sideWrapBack;
+    }
+
+    posAttr.setXYZ(i, x, y, z);
+    chuteMasks[i] = profile.chuteIntensity * (1 - Math.pow(Math.abs(centeredU), 3.1) * 0.65);
+  }
+
+  geometry.setAttribute('aChuteMask', new THREE.BufferAttribute(chuteMasks, 1));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function createVolumetricPlumeVeilGeometry(options: {
   readonly centerX: number;
   readonly widthTop: number;
   readonly widthBottom: number;
-  readonly startYOffset: number;
+  readonly startY: number;
+  readonly endY: number;
+  readonly startZ: number;
   readonly forwardReach: number;
   readonly archDepth: number;
   readonly phase: number;
@@ -164,8 +253,6 @@ function createVolumetricPlumeVeilGeometry(options: {
   }
 
   const chuteMasks = new Float32Array(posAttr.count);
-  const startY = computeWaterfallCrestHeight(options.centerX) + options.startYOffset;
-  const baseCliffZ = computeEscarpmentLineZ(options.centerX) + 0.85;
 
   for (let i = 0; i < posAttr.count; i++) {
     const u = uvAttr.getX(i);
@@ -182,9 +269,9 @@ function createVolumetricPlumeVeilGeometry(options: {
 
     const point = computeParabolicFallPoint({
       progress,
-      startY,
-      endY: -0.45,
-      startZ: baseCliffZ,
+      startY: options.startY,
+      endY: options.endY,
+      startZ: options.startZ,
       forwardReach: options.forwardReach,
     });
 
@@ -227,12 +314,13 @@ export function createIcelandicWaterfall(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly foamTexture: THREE.DataTexture;
   readonly fallbackTexture: THREE.Texture;
+  readonly preset: WaterfallPresetConfig;
 }): WaterfallSystem {
   const group = new THREE.Group();
   const sunDir = new THREE.Vector3(
-    SCENE_CONFIG.sunDirection.x,
-    SCENE_CONFIG.sunDirection.y,
-    SCENE_CONFIG.sunDirection.z,
+    options.preset.sunDirection.x,
+    options.preset.sunDirection.y,
+    options.preset.sunDirection.z,
   ).normalize();
 
   const materialUniforms: WaterfallMaterialUniforms[] = [];
@@ -283,81 +371,195 @@ export function createIcelandicWaterfall(options: {
     return mat;
   };
 
-  const mainGeometry = createSculptedMainWaterfallGeometry();
-  geometriesToDispose.push(mainGeometry);
-  const mainMaterial = createWaterfallMat({
-    opacity: 0.96,
-    speed: 1.5,
-    turbulence: 1.05,
-    phaseOffset: 0.0,
-    coreDensity: 0.78,
-    horizontalRepeat: 2.75,
-  });
-  const mainMesh = new THREE.Mesh(mainGeometry, mainMaterial);
-  mainMesh.renderOrder = 3;
-  group.add(mainMesh);
-
-  const outerPlumeConfigs = [
-    {
-      centerX: -3.5,
-      widthTop: 2.1,
-      widthBottom: 3.4,
-      startYOffset: -1.6,
-      forwardReach: 4.5,
-      archDepth: 0.78,
-      phase: 1.4,
-      speed: 1.66,
-      opacity: 0.56,
-    },
-    {
-      centerX: -1.1,
-      widthTop: 3.4,
-      widthBottom: 4.8,
-      startYOffset: -0.9,
-      forwardReach: 4.9,
-      archDepth: 1.05,
-      phase: 3.9,
-      speed: 1.88,
-      opacity: 0.58,
-    },
-    {
-      centerX: 1.9,
-      widthTop: 2.6,
-      widthBottom: 3.7,
-      startYOffset: -1.15,
-      forwardReach: 4.2,
-      archDepth: 0.88,
-      phase: 6.7,
-      speed: 1.72,
-      opacity: 0.52,
-    },
-    {
-      centerX: 4.1,
-      widthTop: 1.8,
-      widthBottom: 2.9,
-      startYOffset: -2.1,
-      forwardReach: 3.6,
-      archDepth: 0.64,
-      phase: 9.3,
-      speed: 1.54,
-      opacity: 0.46,
-    },
-  ];
-
-  for (const cfg of outerPlumeConfigs) {
-    const plumeGeo = createVolumetricPlumeVeilGeometry(cfg);
-    geometriesToDispose.push(plumeGeo);
-    const plumeMat = createWaterfallMat({
-      opacity: cfg.opacity,
-      speed: cfg.speed,
-      turbulence: 1.18,
-      phaseOffset: cfg.phase,
-      coreDensity: 0.14,
-      horizontalRepeat: 1.45,
+  if (options.preset.id === 'forest') {
+    const upperTierGeo = createForestTierGeometry({
+      widthTop: FOREST_WATERFALL_CONFIG.upperWidthTop,
+      widthBottom: FOREST_WATERFALL_CONFIG.upperWidthBottom,
+      startYFn: computeForestUpperCrestY,
+      endY: FOREST_WATERFALL_CONFIG.midShelfHeight - 0.5,
+      startZFn: (x) => computeForestEscarpmentZ(x),
+      forwardReach: 3.1,
+      centerShiftX: -0.35,
+      hasLipUpstream: true,
     });
-    const mesh = new THREE.Mesh(plumeGeo, plumeMat);
-    mesh.renderOrder = 4;
-    group.add(mesh);
+    geometriesToDispose.push(upperTierGeo);
+    const upperTierMat = createWaterfallMat({
+      opacity: 0.95,
+      speed: 1.44,
+      turbulence: 0.9,
+      phaseOffset: 0.4,
+      coreDensity: 0.78,
+      horizontalRepeat: 2.15,
+    });
+    const upperMesh = new THREE.Mesh(upperTierGeo, upperTierMat);
+    upperMesh.renderOrder = 3;
+    group.add(upperMesh);
+
+    const lowerTierGeo = createForestTierGeometry({
+      widthTop: FOREST_WATERFALL_CONFIG.lowerWidthTop,
+      widthBottom: FOREST_WATERFALL_CONFIG.lowerWidthBottom,
+      startYFn: computeForestMidShelfY,
+      endY: -0.65,
+      startZFn: (x) => FOREST_WATERFALL_CONFIG.midShelfZ + Math.sin(x * 0.45) * 0.45,
+      forwardReach: 3.6,
+      centerShiftX: 0.15,
+      hasLipUpstream: false,
+    });
+    geometriesToDispose.push(lowerTierGeo);
+    const lowerTierMat = createWaterfallMat({
+      opacity: 0.96,
+      speed: 1.56,
+      turbulence: 1.05,
+      phaseOffset: 2.9,
+      coreDensity: 0.76,
+      horizontalRepeat: 2.75,
+    });
+    const lowerMesh = new THREE.Mesh(lowerTierGeo, lowerTierMat);
+    lowerMesh.renderOrder = 3;
+    group.add(lowerMesh);
+
+    const forestPlumes = [
+      {
+        centerX: -0.6,
+        widthTop: 2.4,
+        widthBottom: 3.4,
+        startY: computeForestUpperCrestY(-0.6) - 0.8,
+        endY: FOREST_WATERFALL_CONFIG.midShelfHeight - 0.3,
+        startZ: computeForestEscarpmentZ(-0.6) + 0.85,
+        forwardReach: 3.7,
+        archDepth: 0.75,
+        phase: 1.9,
+        speed: 1.66,
+        opacity: 0.54,
+      },
+      {
+        centerX: -2.6,
+        widthTop: 2.5,
+        widthBottom: 3.6,
+        startY: computeForestMidShelfY(-2.6) - 0.6,
+        endY: -0.45,
+        startZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.8,
+        forwardReach: 4.35,
+        archDepth: 0.82,
+        phase: 4.8,
+        speed: 1.72,
+        opacity: 0.55,
+      },
+      {
+        centerX: 1.6,
+        widthTop: 2.8,
+        widthBottom: 4.0,
+        startY: computeForestMidShelfY(1.6) - 0.6,
+        endY: -0.45,
+        startZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.75,
+        forwardReach: 4.5,
+        archDepth: 0.92,
+        phase: 7.4,
+        speed: 1.82,
+        opacity: 0.56,
+      },
+    ];
+
+    for (const cfg of forestPlumes) {
+      const plumeGeo = createVolumetricPlumeVeilGeometry(cfg);
+      geometriesToDispose.push(plumeGeo);
+      const plumeMat = createWaterfallMat({
+        opacity: cfg.opacity,
+        speed: cfg.speed,
+        turbulence: 1.12,
+        phaseOffset: cfg.phase,
+        coreDensity: 0.14,
+        horizontalRepeat: 1.4,
+      });
+      const mesh = new THREE.Mesh(plumeGeo, plumeMat);
+      mesh.renderOrder = 4;
+      group.add(mesh);
+    }
+  } else {
+    const mainGeometry = createIcelandMainWaterfallGeometry();
+    geometriesToDispose.push(mainGeometry);
+    const mainMaterial = createWaterfallMat({
+      opacity: 0.96,
+      speed: 1.5,
+      turbulence: 1.05,
+      phaseOffset: 0.0,
+      coreDensity: 0.78,
+      horizontalRepeat: 2.75,
+    });
+    const mainMesh = new THREE.Mesh(mainGeometry, mainMaterial);
+    mainMesh.renderOrder = 3;
+    group.add(mainMesh);
+
+    const outerPlumeConfigs = [
+      {
+        centerX: -3.5,
+        widthTop: 2.1,
+        widthBottom: 3.4,
+        startY: computeWaterfallCrestHeight(-3.5) - 1.6,
+        endY: -0.45,
+        startZ: computeEscarpmentLineZ(-3.5) + 0.85,
+        forwardReach: 4.5,
+        archDepth: 0.78,
+        phase: 1.4,
+        speed: 1.66,
+        opacity: 0.56,
+      },
+      {
+        centerX: -1.1,
+        widthTop: 3.4,
+        widthBottom: 4.8,
+        startY: computeWaterfallCrestHeight(-1.1) - 0.9,
+        endY: -0.45,
+        startZ: computeEscarpmentLineZ(-1.1) + 0.85,
+        forwardReach: 4.9,
+        archDepth: 1.05,
+        phase: 3.9,
+        speed: 1.88,
+        opacity: 0.58,
+      },
+      {
+        centerX: 1.9,
+        widthTop: 2.6,
+        widthBottom: 3.7,
+        startY: computeWaterfallCrestHeight(1.9) - 1.15,
+        endY: -0.45,
+        startZ: computeEscarpmentLineZ(1.9) + 0.85,
+        forwardReach: 4.2,
+        archDepth: 0.88,
+        phase: 6.7,
+        speed: 1.72,
+        opacity: 0.52,
+      },
+      {
+        centerX: 4.1,
+        widthTop: 1.8,
+        widthBottom: 2.9,
+        startY: computeWaterfallCrestHeight(4.1) - 2.1,
+        endY: -0.45,
+        startZ: computeEscarpmentLineZ(4.1) + 0.85,
+        forwardReach: 3.6,
+        archDepth: 0.64,
+        phase: 9.3,
+        speed: 1.54,
+        opacity: 0.46,
+      },
+    ];
+
+    for (const cfg of outerPlumeConfigs) {
+      const plumeGeo = createVolumetricPlumeVeilGeometry(cfg);
+      geometriesToDispose.push(plumeGeo);
+      const plumeMat = createWaterfallMat({
+        opacity: cfg.opacity,
+        speed: cfg.speed,
+        turbulence: 1.18,
+        phaseOffset: cfg.phase,
+        coreDensity: 0.14,
+        horizontalRepeat: 1.45,
+      });
+      const mesh = new THREE.Mesh(plumeGeo, plumeMat);
+      mesh.renderOrder = 4;
+      group.add(mesh);
+    }
   }
 
   return {

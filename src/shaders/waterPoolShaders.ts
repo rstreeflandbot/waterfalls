@@ -26,6 +26,9 @@ export const WATER_POOL_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec2 uPlungeCenter;
 uniform vec3 uSunDirection;
+uniform vec3 uWaterAbsorption;
+uniform vec3 uWaterDeepScatter;
+uniform vec3 uWaterAeratedGlow;
 uniform sampler2D uNoiseTex;
 uniform sampler2D uFoamTex;
 uniform sampler2D tSceneColor;
@@ -132,13 +135,12 @@ void main() {
   }
 
   vec3 underwaterColor = texture2D(tSceneColor, refrUv).rgb;
-  vec3 absorption = exp(-viewDepth * vec3(0.72, 0.34, 0.25));
-  vec3 deepGlacialScatter = vec3(0.009, 0.028, 0.036);
-  vec3 refractedWater = mix(deepGlacialScatter, underwaterColor * absorption, clamp(absorption.b, 0.0, 1.0));
+  vec3 absorption = exp(-viewDepth * uWaterAbsorption);
+  vec3 refractedWater = mix(uWaterDeepScatter, underwaterColor * absorption, clamp(absorption.b, 0.0, 1.0));
 
   float distToImpact = length(xz - uPlungeCenter);
   float aeratedPoolGlow = exp(-distToImpact * 0.14) * 0.045;
-  refractedWater += vec3(0.03, 0.065, 0.075) * aeratedPoolGlow;
+  refractedWater += uWaterAeratedGlow * aeratedPoolGlow;
 
   vec2 reflUv = clamp(vec2(screenUv.x, 1.0 - screenUv.y) + normal.xz * 0.055, vec2(0.002), vec2(0.998));
   vec3 planarReflection = texture2D(tReflection, reflUv).rgb;

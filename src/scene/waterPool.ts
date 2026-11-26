@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { WATER_POOL_FRAGMENT_SHADER, WATER_POOL_VERTEX_SHADER } from '../shaders/waterPoolShaders';
 import { SCENE_CONFIG } from './cliffMath';
+import { WaterfallPresetConfig } from './waterfallPresets';
 
 export interface WaterPoolSystem {
   readonly mesh: THREE.Mesh;
   readonly update: (elapsedSeconds: number) => void;
+  readonly applyPreset: (preset: WaterfallPresetConfig) => void;
   readonly setSceneTextures: (options: {
     readonly colorTexture: THREE.Texture;
     readonly depthTexture: THREE.Texture;
@@ -26,20 +28,31 @@ export function createGlacialWaterPool(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly foamTexture: THREE.DataTexture;
   readonly fallbackTexture: THREE.Texture;
+  readonly preset: WaterfallPresetConfig;
 }): WaterPoolSystem {
   const geometry = new THREE.PlaneGeometry(156, 176, 150, 160);
   geometry.rotateX(-Math.PI / 2);
 
+  const style = options.preset.waterStyle;
   const sunDir = new THREE.Vector3(
-    SCENE_CONFIG.sunDirection.x,
-    SCENE_CONFIG.sunDirection.y,
-    SCENE_CONFIG.sunDirection.z,
+    options.preset.sunDirection.x,
+    options.preset.sunDirection.y,
+    options.preset.sunDirection.z,
   ).normalize();
 
   const uniforms = {
     uTime: { value: 0 },
-    uPlungeCenter: { value: new THREE.Vector2(0, SCENE_CONFIG.plungeCenterZ + 0.5) },
+    uPlungeCenter: { value: new THREE.Vector2(0, style.plungeCenterZ) },
     uSunDirection: { value: sunDir },
+    uWaterAbsorption: {
+      value: new THREE.Vector3(style.absorption[0], style.absorption[1], style.absorption[2]),
+    },
+    uWaterDeepScatter: {
+      value: new THREE.Vector3(style.deepScatter[0], style.deepScatter[1], style.deepScatter[2]),
+    },
+    uWaterAeratedGlow: {
+      value: new THREE.Vector3(style.aeratedGlow[0], style.aeratedGlow[1], style.aeratedGlow[2]),
+    },
     uNoiseTex: { value: options.noiseTexture },
     uFoamTex: { value: options.foamTexture },
     tSceneColor: { value: options.fallbackTexture },
@@ -70,6 +83,27 @@ export function createGlacialWaterPool(options: {
     mesh,
     update: (elapsedSeconds: number) => {
       uniforms.uTime.value = elapsedSeconds;
+    },
+    applyPreset: (preset) => {
+      uniforms.uPlungeCenter.value.set(0, preset.waterStyle.plungeCenterZ);
+      uniforms.uSunDirection.value
+        .set(preset.sunDirection.x, preset.sunDirection.y, preset.sunDirection.z)
+        .normalize();
+      uniforms.uWaterAbsorption.value.set(
+        preset.waterStyle.absorption[0],
+        preset.waterStyle.absorption[1],
+        preset.waterStyle.absorption[2],
+      );
+      uniforms.uWaterDeepScatter.value.set(
+        preset.waterStyle.deepScatter[0],
+        preset.waterStyle.deepScatter[1],
+        preset.waterStyle.deepScatter[2],
+      );
+      uniforms.uWaterAeratedGlow.value.set(
+        preset.waterStyle.aeratedGlow[0],
+        preset.waterStyle.aeratedGlow[1],
+        preset.waterStyle.aeratedGlow[2],
+      );
     },
     setSceneTextures: (sceneOpts) => {
       uniforms.tSceneColor.value = sceneOpts.colorTexture;
