@@ -8,18 +8,10 @@ import {
   computeWaterfallCrestHeight,
   createSeededRandom,
   generateBasaltColumnLayout,
-  ridgedMultifractal2d,
   smoothstep,
   warpTerrainCoordinate,
 } from './cliffMath';
-import {
-  FOREST_WATERFALL_CONFIG,
-  computeForestCanyonTerrainHeight,
-  computeForestEscarpmentZ,
-  computeForestRiverCenterX,
-} from './forestCanyonMath';
-import { ForestTextureSets, IcelandTextureSets, PbrTextureSet } from './pbrTextures';
-import { WaterfallPresetId } from './waterfallPresets';
+import { IcelandTextureSets, PbrTextureSet } from './pbrTextures';
 
 export interface CliffSystem {
   readonly group: THREE.Group;
@@ -34,9 +26,6 @@ interface TerrainShaderUniforms {
   readonly uBasaltAlbedo: { value: THREE.Texture };
   readonly uBasaltNormal: { value: THREE.Texture };
   readonly uBasaltRma: { value: THREE.Texture };
-  readonly uMossyRockAlbedo: { value: THREE.Texture };
-  readonly uMossyRockNormal: { value: THREE.Texture };
-  readonly uMossyRockRma: { value: THREE.Texture };
   readonly uMossAlbedo: { value: THREE.Texture };
   readonly uMossNormal: { value: THREE.Texture };
   readonly uMossRma: { value: THREE.Texture };
@@ -57,40 +46,30 @@ interface RockPlacement {
   readonly rz: number;
 }
 
-function createTriplanarTerrainMaterial(options: {
-  readonly uniforms: TerrainShaderUniforms;
-  readonly presetId: WaterfallPresetId;
-}): THREE.MeshStandardMaterial {
-  const isForest = options.presetId === 'forest';
+function createTriplanarTerrainMaterial(
+  uniforms: TerrainShaderUniforms,
+): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     color: new THREE.Color(0xffffff),
     roughness: 0.85,
     metalness: 0.04,
-    envMapIntensity: isForest ? 0.72 : 1.25,
+    envMapIntensity: 1.25,
   });
 
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = options.uniforms.uTime;
-    shader.uniforms.uNoiseTex = options.uniforms.uNoiseTex;
-    shader.uniforms.uBasaltAlbedo = options.uniforms.uBasaltAlbedo;
-    shader.uniforms.uBasaltNormal = options.uniforms.uBasaltNormal;
-    shader.uniforms.uBasaltRma = options.uniforms.uBasaltRma;
-    shader.uniforms.uMossyRockAlbedo = options.uniforms.uMossyRockAlbedo;
-    shader.uniforms.uMossyRockNormal = options.uniforms.uMossyRockNormal;
-    shader.uniforms.uMossyRockRma = options.uniforms.uMossyRockRma;
-    shader.uniforms.uMossAlbedo = options.uniforms.uMossAlbedo;
-    shader.uniforms.uMossNormal = options.uniforms.uMossNormal;
-    shader.uniforms.uMossRma = options.uniforms.uMossRma;
-    shader.uniforms.uSandAlbedo = options.uniforms.uSandAlbedo;
-    shader.uniforms.uSandNormal = options.uniforms.uSandNormal;
-    shader.uniforms.uSandRma = options.uniforms.uSandRma;
-    shader.uniforms.uCrestHeight = {
-      value: isForest ? FOREST_WATERFALL_CONFIG.upperCrestHeight : SCENE_CONFIG.crestHeight,
-    };
-    shader.uniforms.uPlungeZ = {
-      value: isForest ? FOREST_WATERFALL_CONFIG.plungeCenterZ : SCENE_CONFIG.plungeCenterZ,
-    };
-    shader.uniforms.uForestMode = { value: isForest ? 1.0 : 0.0 };
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uNoiseTex = uniforms.uNoiseTex;
+    shader.uniforms.uBasaltAlbedo = uniforms.uBasaltAlbedo;
+    shader.uniforms.uBasaltNormal = uniforms.uBasaltNormal;
+    shader.uniforms.uBasaltRma = uniforms.uBasaltRma;
+    shader.uniforms.uMossAlbedo = uniforms.uMossAlbedo;
+    shader.uniforms.uMossNormal = uniforms.uMossNormal;
+    shader.uniforms.uMossRma = uniforms.uMossRma;
+    shader.uniforms.uSandAlbedo = uniforms.uSandAlbedo;
+    shader.uniforms.uSandNormal = uniforms.uSandNormal;
+    shader.uniforms.uSandRma = uniforms.uSandRma;
+    shader.uniforms.uCrestHeight = { value: SCENE_CONFIG.crestHeight };
+    shader.uniforms.uPlungeZ = { value: SCENE_CONFIG.plungeCenterZ };
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -105,24 +84,9 @@ function createTriplanarTerrainMaterial(options: {
         '#include <worldpos_vertex>',
         /* glsl */ `
         #include <worldpos_vertex>
-        vec4 terrainLocalPos = vec4(transformed, 1.0);
-        #ifdef USE_INSTANCING
-          terrainLocalPos = instanceMatrix * terrainLocalPos;
-        #endif
-        vec4 terrainWorldPos = modelMatrix * terrainLocalPos;
+        vec4 terrainWorldPos = modelMatrix * vec4(transformed, 1.0);
         vTerrainWorldPos = terrainWorldPos.xyz;
-
-        vec3 terrainLocalNormal = objectNormal;
-        #ifdef USE_INSTANCING
-          mat3 tim = mat3(instanceMatrix);
-          mat3 tAdjugateT = mat3(
-            cross(tim[1], tim[2]),
-            cross(tim[2], tim[0]),
-            cross(tim[0], tim[1])
-          );
-          terrainLocalNormal = tAdjugateT * objectNormal;
-        #endif
-        vTerrainWorldNormal = normalize(mat3(modelMatrix) * terrainLocalNormal);
+        vTerrainWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
         `,
       );
 
@@ -136,9 +100,6 @@ function createTriplanarTerrainMaterial(options: {
         uniform sampler2D uBasaltAlbedo;
         uniform sampler2D uBasaltNormal;
         uniform sampler2D uBasaltRma;
-        uniform sampler2D uMossyRockAlbedo;
-        uniform sampler2D uMossyRockNormal;
-        uniform sampler2D uMossyRockRma;
         uniform sampler2D uMossAlbedo;
         uniform sampler2D uMossNormal;
         uniform sampler2D uMossRma;
@@ -147,7 +108,6 @@ function createTriplanarTerrainMaterial(options: {
         uniform sampler2D uSandRma;
         uniform float uCrestHeight;
         uniform float uPlungeZ;
-        uniform float uForestMode;
 
         varying vec3 vTerrainWorldPos;
         varying vec3 vTerrainWorldNormal;
@@ -179,79 +139,41 @@ function createTriplanarTerrainMaterial(options: {
         vec3 triWeights = pow(abs(tNorm), vec3(4.0));
         triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.0001);
 
-        float rockScale = mix(0.11, 0.125, uForestMode);
-        float mossScale = mix(0.15, 0.22, uForestMode);
-        float sandScale = mix(0.22, 0.20, uForestMode);
+        float rockScale = 0.11;
+        float mossScale = 0.15;
+        float sandScale = 0.22;
 
         float macroNoise = texture2D(uNoiseTex, tPos.xz * 0.017).r;
         float patchNoise = texture2D(uNoiseTex, tPos.xz * 0.052 + vec2(0.31, 0.67)).a;
-        float detailNoise = texture2D(uNoiseTex, tPos.xz * 0.185 + vec2(tPos.y * 0.09, 0.42)).b;
-        float strataNoise = texture2D(uNoiseTex, vec2(tPos.x * 0.025, tPos.y * 0.075)).g;
 
         vec3 basaltRaw = sampleTriplanarColor(uBasaltAlbedo, tPos, triWeights, rockScale);
         vec3 basaltRma = sampleTriplanarColor(uBasaltRma, tPos, triWeights, rockScale);
+        vec3 basaltCol = basaltRaw * vec3(0.74, 0.78, 0.85);
 
-        vec3 icelandRockCol = basaltRaw * vec3(0.74, 0.78, 0.85);
-
-        vec3 columbiaBasalt = basaltRaw * mix(vec3(0.46, 0.40, 0.39), vec3(0.64, 0.52, 0.46), strataNoise);
-        vec3 lowerMossRockRaw = sampleTriplanarColor(uMossyRockAlbedo, tPos, triWeights, 0.15);
-        vec3 lowerMossRockRma = sampleTriplanarColor(uMossyRockRma, tPos, triWeights, 0.15);
-        vec3 lowerMossRockCol = lowerMossRockRaw * mix(vec3(0.46, 0.52, 0.42), vec3(0.62, 0.58, 0.48), detailNoise * 0.55);
-
-        float lowerGorgeBlend = 1.0 - smoothstep(13.5, 24.0, tPos.y + (macroNoise - 0.5) * 4.5);
-        vec3 forestRockCol = mix(columbiaBasalt, lowerMossRockCol, lowerGorgeBlend);
-        vec3 forestRockRma = mix(basaltRma, lowerMossRockRma, lowerGorgeBlend);
-
-        vec3 basaltCol = mix(icelandRockCol, forestRockCol, uForestMode);
-        vec3 activeRockRma = mix(basaltRma, forestRockRma, uForestMode);
-
-        vec3 mossPlanar = texture2D(uMossAlbedo, tPos.xz * mossScale).rgb;
-        vec3 mossTri = sampleTriplanarColor(uMossAlbedo, tPos, triWeights, mossScale);
-        vec3 mossRaw = mix(mossPlanar, mossTri, uForestMode);
-        vec3 icelandMoss = mossRaw * 0.92;
-        vec3 deepForestMoss = mossRaw * vec3(0.24, 0.52, 0.14);
-        vec3 sunlitChartreuseMoss = mossRaw * vec3(0.58, 0.78, 0.18);
-        vec3 forestMoss = mix(
-          deepForestMoss,
-          sunlitChartreuseMoss,
-          smoothstep(0.32, 0.82, patchNoise * 0.62 + detailNoise * 0.38) * smoothstep(0.25, 0.8, tNorm.y)
-        );
-        vec3 mossCol = mix(icelandMoss, forestMoss, uForestMode);
-        vec3 mossRma = mix(
-          texture2D(uMossRma, tPos.xz * mossScale).rgb,
-          sampleTriplanarColor(uMossRma, tPos, triWeights, mossScale),
-          uForestMode
-        );
+        vec3 mossCol = texture2D(uMossAlbedo, tPos.xz * mossScale).rgb * 0.92;
+        vec3 mossRma = texture2D(uMossRma, tPos.xz * mossScale).rgb;
 
         vec3 sandRaw = texture2D(uSandAlbedo, tPos.xz * sandScale).rgb;
         float sandLuma = dot(sandRaw, vec3(0.299, 0.587, 0.114));
-        vec3 icelandSand = mix(vec3(sandLuma), sandRaw, 0.22) * vec3(0.18, 0.20, 0.23);
-        vec3 forestLeafFloor = sandRaw * mix(vec3(0.46, 0.30, 0.16), vec3(0.68, 0.42, 0.18), patchNoise);
-        vec3 sandCol = mix(icelandSand, forestLeafFloor, uForestMode);
+        vec3 sandCol = mix(vec3(sandLuma), sandRaw, 0.22) * vec3(0.18, 0.20, 0.23);
         vec3 sandRma = texture2D(uSandRma, tPos.xz * sandScale).rgb;
 
-        float slopeUp = smoothstep(mix(0.55, 0.44, uForestMode), mix(0.84, 0.82, uForestMode), tNorm.y);
-        float icelandSandMask = smoothstep(0.55, 0.84, tNorm.y) * (1.0 - smoothstep(0.65, 3.1, tPos.y + (macroNoise - 0.5) * 1.0));
-        float forestFloorMask = smoothstep(0.56, 0.86, tNorm.y) * (1.0 - smoothstep(1.2, 28.0, tPos.y)) * smoothstep(0.34, 0.72, macroNoise * 0.7 + detailNoise * 0.3);
-        float sandMask = mix(icelandSandMask, forestFloorMask, uForestMode);
+        float slopeUp = smoothstep(0.55, 0.84, tNorm.y);
+        float sandMask = slopeUp * (1.0 - smoothstep(0.65, 3.1, tPos.y + (macroNoise - 0.5) * 1.0));
 
-        float outsideWaterfall = smoothstep(mix(5.8, 2.8, uForestMode), mix(12.2, 7.0, uForestMode), length(vec2(tPos.x * 0.82, tPos.z - uPlungeZ)));
-        float mossElevation = smoothstep(mix(1.2, 0.55, uForestMode), mix(4.0, 2.2, uForestMode), tPos.y) * (1.0 - smoothstep(mix(42.0, 22.0, uForestMode), mix(62.0, 34.0, uForestMode), tPos.y));
-        float rawMossInput = slopeUp * mossElevation * outsideWaterfall * (mix(0.45, 0.64, uForestMode) + 0.55 * patchNoise);
-        float heightCreviceMoss = clamp((mossRma.b + rawMossInput - activeRockRma.r) * 5.2, 0.0, 1.0) * smoothstep(0.14, 0.38, rawMossInput);
-
-        float rockBreakup = smoothstep(0.32, 0.78, detailNoise * 0.62 + patchNoise * 0.38) * smoothstep(0.24, 0.72, activeRockRma.r);
-        float cliffMossDrapes = uForestMode * lowerGorgeBlend * outsideWaterfall * smoothstep(1.4, 5.5, tPos.y) * rockBreakup * 0.56;
-        float totalMoss = clamp(heightCreviceMoss + cliffMossDrapes, 0.0, 1.0);
+        float outsideWaterfall = smoothstep(5.8, 12.2, length(vec2(tPos.x * 0.82, tPos.z - uPlungeZ)));
+        float mossElevation = smoothstep(1.2, 4.0, tPos.y) * (1.0 - smoothstep(42.0, 62.0, tPos.y));
+        float rawMossInput = slopeUp * mossElevation * outsideWaterfall * (0.45 + 0.55 * patchNoise);
+        float totalMoss = clamp((mossRma.b + rawMossInput - basaltRma.r) * 5.2, 0.0, 1.0) * smoothstep(0.14, 0.38, rawMossInput);
 
         vec3 groundAlbedo = mix(basaltCol, sandCol, sandMask);
         groundAlbedo = mix(groundAlbedo, mossCol, totalMoss);
 
-        float cavityAo = mix(mix(activeRockRma.r, sandRma.r, sandMask), mossRma.r, totalMoss);
+        float cavityAo = mix(mix(basaltRma.r, sandRma.r, sandMask), mossRma.r, totalMoss);
         groundAlbedo *= (0.44 + 0.56 * cavityAo);
         groundAlbedo *= (0.82 + 0.34 * macroNoise);
 
-        float highSnowMask = (1.0 - uForestMode) * smoothstep(38.0, 56.0, tPos.y + macroNoise * 7.5) * smoothstep(0.45, 0.8, tNorm.y);
+        float highSnowMask = smoothstep(38.0, 56.0, tPos.y + macroNoise * 7.5) * smoothstep(0.45, 0.8, tNorm.y);
         groundAlbedo = mix(groundAlbedo, vec3(0.52, 0.58, 0.66), highSnowMask * 0.55);
 
         float poolWet = 1.0 - smoothstep(0.05, 2.4, tPos.y);
@@ -260,8 +182,7 @@ function createTriplanarTerrainMaterial(options: {
         float terrainWetness = clamp(max(poolWet, sprayWet * 0.96), 0.0, 1.0);
 
         float trickle = smoothstep(0.68, 0.90, texture2D(uNoiseTex, vec2((tPos.x + tPos.z) * 0.28, tPos.y * 0.05 + uTime * 0.16)).b) * sprayWet * (1.0 - abs(tNorm.y));
-        float wetDarken = mix(0.50, 0.46, uForestMode);
-        groundAlbedo *= mix(1.0, wetDarken, terrainWetness * (1.0 - totalMoss * 0.52));
+        groundAlbedo *= mix(1.0, 0.50, terrainWetness * (1.0 - totalMoss * 0.52));
         groundAlbedo += vec3(0.018, 0.024, 0.028) * trickle;
 
         diffuseColor.rgb = groundAlbedo;
@@ -278,23 +199,14 @@ function createTriplanarTerrainMaterial(options: {
 
         float rMacro = texture2D(uNoiseTex, rPos.xz * 0.017).r;
         float rPatch = texture2D(uNoiseTex, rPos.xz * 0.052 + vec2(0.31, 0.67)).a;
-        float rSlope = smoothstep(mix(0.55, 0.44, uForestMode), mix(0.84, 0.82, uForestMode), rNorm.y);
-        float rSand = smoothstep(0.55, 0.84, rNorm.y) * (1.0 - smoothstep(0.65, mix(3.1, 14.0, uForestMode), rPos.y + (rMacro - 0.5) * 1.0));
+        float rSlope = smoothstep(0.55, 0.84, rNorm.y);
+        float rSand = rSlope * (1.0 - smoothstep(0.65, 3.1, rPos.y + (rMacro - 0.5) * 1.0));
         float rOutside = smoothstep(3.2, 9.2, length(vec2(rPos.x * 0.80, rPos.z - uPlungeZ)));
-        float rLowerGorge = 1.0 - smoothstep(13.5, 24.0, rPos.y + (rMacro - 0.5) * 4.5);
-        float rMoss = clamp(rSlope * smoothstep(0.6, 3.0, rPos.y) * rOutside * smoothstep(0.24, 0.64, rPatch) + uForestMode * rLowerGorge * rOutside * 0.45, 0.0, 1.0);
+        float rMoss = clamp(rSlope * smoothstep(0.6, 3.0, rPos.y) * rOutside * smoothstep(0.24, 0.64, rPatch), 0.0, 1.0);
 
-        float rockScaleR = mix(0.11, 0.125, uForestMode);
-        float basaltRough = sampleTriplanarColor(uBasaltRma, rPos, rTriW, rockScaleR).g;
-        float mossyRockRough = sampleTriplanarColor(uMossyRockRma, rPos, rTriW, 0.15).g;
-        float rockRough = mix(basaltRough, mix(basaltRough, mossyRockRough, rLowerGorge), uForestMode);
-        float sandRough = texture2D(uSandRma, rPos.xz * mix(0.22, 0.20, uForestMode)).g;
-        float mossRough = mix(
-          texture2D(uMossRma, rPos.xz * 0.15).g,
-          sampleTriplanarColor(uMossRma, rPos, rTriW, 0.22).g,
-          uForestMode
-        );
-
+        float rockRough = sampleTriplanarColor(uBasaltRma, rPos, rTriW, 0.11).g;
+        float sandRough = texture2D(uSandRma, rPos.xz * 0.22).g;
+        float mossRough = texture2D(uMossRma, rPos.xz * 0.15).g;
         float surfaceRough = mix(mix(rockRough, sandRough, rSand), mossRough, rMoss);
 
         float rPoolWet = 1.0 - smoothstep(0.05, 2.4, rPos.y);
@@ -302,7 +214,7 @@ function createTriplanarTerrainMaterial(options: {
         float rSprayWet = (1.0 - smoothstep(4.2, 15.0, rFallDist)) * (1.0 - smoothstep(uCrestHeight + 0.5, uCrestHeight + 3.5, rPos.y));
         float rWetness = clamp(max(rPoolWet, rSprayWet * 0.96), 0.0, 1.0);
 
-        roughnessFactor = mix(surfaceRough, mix(0.12, 0.09, uForestMode), rWetness * (1.0 - rMoss * 0.68));
+        roughnessFactor = mix(surfaceRough, 0.12, rWetness * (1.0 - rMoss * 0.68));
         `,
       )
       .replace(
@@ -316,44 +228,25 @@ function createTriplanarTerrainMaterial(options: {
 
         float nMacro = texture2D(uNoiseTex, nPos.xz * 0.017).r;
         float nPatch = texture2D(uNoiseTex, nPos.xz * 0.052 + vec2(0.31, 0.67)).a;
-        float nSlope = smoothstep(mix(0.55, 0.44, uForestMode), mix(0.84, 0.82, uForestMode), nNorm.y);
-        float nSand = smoothstep(0.55, 0.84, nNorm.y) * (1.0 - smoothstep(0.65, mix(3.1, 14.0, uForestMode), nPos.y + (nMacro - 0.5) * 1.0));
+        float nSlope = smoothstep(0.55, 0.84, nNorm.y);
+        float nSand = nSlope * (1.0 - smoothstep(0.65, 3.1, nPos.y + (nMacro - 0.5) * 1.0));
         float nOutside = smoothstep(3.2, 9.2, length(vec2(nPos.x * 0.80, nPos.z - uPlungeZ)));
-        float nLowerGorge = 1.0 - smoothstep(13.5, 24.0, nPos.y + (nMacro - 0.5) * 4.5);
-        float nMoss = clamp(nSlope * smoothstep(0.6, 3.0, nPos.y) * nOutside * smoothstep(0.24, 0.64, nPatch) + uForestMode * nLowerGorge * nOutside * 0.45, 0.0, 1.0);
+        float nMoss = clamp(nSlope * smoothstep(0.6, 3.0, nPos.y) * nOutside * smoothstep(0.24, 0.64, nPatch), 0.0, 1.0);
 
-        float rockScaleN = mix(0.11, 0.125, uForestMode);
-        vec3 basaltPerturb = sampleTriplanarNormalOffset(uBasaltNormal, nPos, nTriW, rockScaleN);
-        vec3 mossyRockPerturb = sampleTriplanarNormalOffset(uMossyRockNormal, nPos, nTriW, 0.15);
-        vec3 activeRockPerturb = mix(basaltPerturb, mix(basaltPerturb, mossyRockPerturb, nLowerGorge), uForestMode);
-        vec3 sandTn = texture2D(uSandNormal, nPos.xz * mix(0.22, 0.20, uForestMode)).xyz * 2.0 - 1.0;
+        vec3 basaltPerturb = sampleTriplanarNormalOffset(uBasaltNormal, nPos, nTriW, 0.11);
+        vec3 sandTn = texture2D(uSandNormal, nPos.xz * 0.22).xyz * 2.0 - 1.0;
         vec3 sandPerturb = vec3(sandTn.x, 0.0, sandTn.y);
         vec3 mossPlanarTn = texture2D(uMossNormal, nPos.xz * 0.15).xyz * 2.0 - 1.0;
-        vec3 mossTriPerturb = sampleTriplanarNormalOffset(uMossNormal, nPos, nTriW, 0.22);
-        vec3 mossPerturb = mix(vec3(mossPlanarTn.x, 0.0, mossPlanarTn.y), mossTriPerturb, uForestMode);
+        vec3 mossPerturb = vec3(mossPlanarTn.x, 0.0, mossPlanarTn.y);
 
-        vec3 combinedPerturb = mix(mix(activeRockPerturb, sandPerturb, nSand), mossPerturb, nMoss);
+        vec3 combinedPerturb = mix(mix(basaltPerturb, sandPerturb, nSand), mossPerturb, nMoss);
         vec3 perturbedWorldNormal = normalize(nNorm + combinedPerturb * 1.05);
         normal = normalize((viewMatrix * vec4(perturbedWorldNormal, 0.0)).xyz);
-        `,
-      )
-      .replace(
-        '#include <aomap_fragment>',
-        /* glsl */ `
-        #include <aomap_fragment>
-        if (uForestMode > 0.5) {
-          float slotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vTerrainWorldPos.x));
-          float depthInGorge = 1.0 - smoothstep(1.5, 23.0, vTerrainWorldPos.y);
-          float backWallPocket = 1.0 - smoothstep(-19.0, 8.0, vTerrainWorldPos.z);
-          float gorgeSkyAo = mix(1.0, 0.52, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
-          reflectedLight.indirectDiffuse *= gorgeSkyAo;
-          reflectedLight.indirectSpecular *= mix(1.0, gorgeSkyAo, 0.55);
-        }
         `,
       );
   };
 
-  material.customProgramCacheKey = () => `aaa-triplanar-terrain-v2-${options.presetId}`;
+  material.customProgramCacheKey = () => 'aaa-triplanar-terrain-iceland';
   return material;
 }
 
@@ -362,7 +255,6 @@ function createBasaltColumnMaterial(options: {
   readonly moss: PbrTextureSet;
   readonly noiseTexture: THREE.DataTexture;
   readonly timeUniform: { value: number };
-  readonly presetId: WaterfallPresetId;
 }): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     map: options.basalt.albedoMap,
@@ -466,406 +358,8 @@ function createBasaltColumnMaterial(options: {
       );
   };
 
-  material.customProgramCacheKey = () => `aaa-basalt-column-${options.presetId}`;
+  material.customProgramCacheKey = () => 'aaa-basalt-column-iceland';
   return material;
-}
-
-function createBensonConcreteMaterial(options: {
-  readonly bridgeStone: PbrTextureSet;
-  readonly baseColorHex: number;
-}): THREE.MeshStandardMaterial {
-  const material = new THREE.MeshStandardMaterial({
-    map: options.bridgeStone.albedoMap,
-    normalMap: options.bridgeStone.normalMap,
-    normalScale: new THREE.Vector2(0.72, 0.72),
-    roughnessMap: options.bridgeStone.rmaMap,
-    color: new THREE.Color(options.baseColorHex),
-    roughness: 0.78,
-    metalness: 0.03,
-    envMapIntensity: 0.75,
-  });
-
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        /* glsl */ `
-        #include <common>
-        varying vec3 vBridgeWPos;
-        varying vec3 vBridgeWNorm;
-        `,
-      )
-      .replace(
-        '#include <worldpos_vertex>',
-        /* glsl */ `
-        #include <worldpos_vertex>
-        vec4 bPos = vec4(transformed, 1.0);
-        #ifdef USE_INSTANCING
-          bPos = instanceMatrix * bPos;
-        #endif
-        bPos = modelMatrix * bPos;
-        vBridgeWPos = bPos.xyz;
-        vec3 bNorm = objectNormal;
-        #ifdef USE_INSTANCING
-          mat3 bim = mat3(instanceMatrix);
-          mat3 bAdj = mat3(
-            cross(bim[1], bim[2]),
-            cross(bim[2], bim[0]),
-            cross(bim[0], bim[1])
-          );
-          bNorm = bAdj * objectNormal;
-        #endif
-        vBridgeWNorm = normalize(mat3(modelMatrix) * bNorm);
-        `,
-      );
-
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        /* glsl */ `
-        #include <common>
-        varying vec3 vBridgeWPos;
-        varying vec3 vBridgeWNorm;
-        `,
-      )
-      .replace(
-        '#include <map_fragment>',
-        /* glsl */ `
-        #include <map_fragment>
-        float lumaC = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-        diffuseColor.rgb = mix(vec3(lumaC), diffuseColor.rgb, 0.32) * vec3(1.26, 1.26, 1.20);
-        vec3 bN = normalize(vBridgeWNorm);
-        float undersideAo = mix(0.52, 1.0, smoothstep(-0.65, 0.25, bN.y));
-        float mistWeather = 1.0 - smoothstep(11.0, 15.8, vBridgeWPos.y) * 0.14;
-        float mossEdge = smoothstep(5.5, 11.0, abs(vBridgeWPos.x)) * smoothstep(-0.1, 0.7, bN.y) * 0.32;
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.24, 0.36, 0.16), mossEdge);
-        diffuseColor.rgb *= undersideAo * mistWeather;
-        `,
-      )
-      .replace(
-        '#include <aomap_fragment>',
-        /* glsl */ `
-        #include <aomap_fragment>
-        float bridgeGorgeAo = mix(0.72, 0.96, smoothstep(11.0, 16.5, vBridgeWPos.y));
-        reflectedLight.indirectDiffuse *= bridgeGorgeAo;
-        `,
-      );
-  };
-
-  material.customProgramCacheKey = () => `benson-concrete-${options.baseColorHex}`;
-  return material;
-}
-
-function createForestStoneBridge(options: {
-  readonly bridgeStone: PbrTextureSet;
-  readonly disposables: {
-    readonly geometries: THREE.BufferGeometry[];
-    readonly materials: THREE.Material[];
-  };
-}): THREE.Group {
-  const bridgeGroup = new THREE.Group();
-  const halfSpan = FOREST_WATERFALL_CONFIG.bridgeHalfSpan;
-  const deckY = FOREST_WATERFALL_CONFIG.bridgeDeckY;
-  const bridgeZ = FOREST_WATERFALL_CONFIG.bridgeZ;
-  const deckDepth = 1.62;
-  const archSpan = 9.4;
-  const archCrownY = deckY - 0.82;
-  const archSpringY = deckY - 4.7;
-  const ribThickness = 0.46;
-
-  const evalArchCenterY = (x: number): number => {
-    const u = Math.min(Math.abs(x) / archSpan, 1.05);
-    return archSpringY + (archCrownY - archSpringY) * (1 - u * u);
-  };
-
-  const concreteMat = createBensonConcreteMaterial({
-    bridgeStone: options.bridgeStone,
-    baseColorHex: 0xc8ccc4,
-  });
-  const trimMat = createBensonConcreteMaterial({
-    bridgeStone: options.bridgeStone,
-    baseColorHex: 0xb2b6ae,
-  });
-  options.disposables.materials.push(concreteMat, trimMat);
-
-  const archShape = new THREE.Shape();
-  const steps = 36;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const x = -archSpan + t * archSpan * 2;
-    const yTop = evalArchCenterY(x) + ribThickness * 0.5;
-    if (i === 0) {
-      archShape.moveTo(x, yTop);
-    } else {
-      archShape.lineTo(x, yTop);
-    }
-  }
-  for (let i = steps; i >= 0; i--) {
-    const t = i / steps;
-    const x = -archSpan + t * archSpan * 2;
-    const yBot = evalArchCenterY(x) - ribThickness * 0.5;
-    archShape.lineTo(x, yBot);
-  }
-  archShape.closePath();
-
-  const archRibGeo = new THREE.ExtrudeGeometry(archShape, {
-    depth: deckDepth * 0.88,
-    bevelEnabled: true,
-    bevelThickness: 0.04,
-    bevelSize: 0.03,
-    bevelSegments: 2,
-  });
-  archRibGeo.translate(0, 0, -deckDepth * 0.44);
-  const ribUv = archRibGeo.attributes.uv;
-  if (ribUv) {
-    for (let i = 0; i < ribUv.count; i++) {
-      ribUv.setXY(i, ribUv.getX(i) * 0.25, ribUv.getY(i) * 0.25);
-    }
-    ribUv.needsUpdate = true;
-  }
-  options.disposables.geometries.push(archRibGeo);
-
-  const archRibMesh = new THREE.Mesh(archRibGeo, concreteMat);
-  archRibMesh.position.set(0, 0, bridgeZ);
-  archRibMesh.castShadow = true;
-  archRibMesh.receiveShadow = true;
-  bridgeGroup.add(archRibMesh);
-
-  const deckSlabGeo = new THREE.BoxGeometry(halfSpan * 2 + 1.2, 0.32, deckDepth + 0.26);
-  options.disposables.geometries.push(deckSlabGeo);
-  const deckSlab = new THREE.Mesh(deckSlabGeo, concreteMat);
-  deckSlab.position.set(0, deckY, bridgeZ);
-  deckSlab.castShadow = true;
-  deckSlab.receiveShadow = true;
-  bridgeGroup.add(deckSlab);
-
-  const spandrelColumnGeo = new THREE.BoxGeometry(0.28, 1.0, 0.28);
-  options.disposables.geometries.push(spandrelColumnGeo);
-  const columnXs = [-8.4, -6.6, -4.8, -3.0, 3.0, 4.8, 6.6, 8.4];
-  const spandrelMatrices: THREE.Matrix4[] = [];
-  const dummy = new THREE.Object3D();
-
-  for (const cx of columnXs) {
-    const archTopY = evalArchCenterY(cx) + ribThickness * 0.35;
-    const colHeight = Math.max(0.25, deckY - 0.12 - archTopY);
-    for (const side of [-1, 1]) {
-      dummy.position.set(cx, archTopY + colHeight * 0.5, bridgeZ + side * (deckDepth * 0.38));
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, colHeight, 1);
-      dummy.updateMatrix();
-      spandrelMatrices.push(dummy.matrix.clone());
-    }
-  }
-
-  const spandrelMesh = new THREE.InstancedMesh(spandrelColumnGeo, trimMat, spandrelMatrices.length);
-  spandrelMesh.castShadow = true;
-  spandrelMesh.receiveShadow = true;
-  for (let i = 0; i < spandrelMatrices.length; i++) {
-    const m = spandrelMatrices[i];
-    if (m) {
-      spandrelMesh.setMatrixAt(i, m);
-    }
-  }
-  spandrelMesh.instanceMatrix.needsUpdate = true;
-  bridgeGroup.add(spandrelMesh);
-
-  const abutmentGeo = new THREE.BoxGeometry(2.6, 6.2, deckDepth + 0.5);
-  options.disposables.geometries.push(abutmentGeo);
-  for (const side of [-1, 1]) {
-    const abutment = new THREE.Mesh(abutmentGeo, trimMat);
-    abutment.position.set(side * (halfSpan - 0.5), deckY - 2.9, bridgeZ);
-    abutment.castShadow = true;
-    abutment.receiveShadow = true;
-    bridgeGroup.add(abutment);
-  }
-
-  const railHeight = 0.92;
-  const copingGeo = new THREE.BoxGeometry(halfSpan * 2 + 1.0, 0.12, 0.22);
-  const lowerCurbGeo = new THREE.BoxGeometry(halfSpan * 2 + 1.0, 0.14, 0.2);
-  options.disposables.geometries.push(copingGeo, lowerCurbGeo);
-
-  for (const sideSign of [-1, 1]) {
-    const railZ = bridgeZ + sideSign * (deckDepth * 0.5 - 0.08);
-    const topRail = new THREE.Mesh(copingGeo, concreteMat);
-    topRail.position.set(0, deckY + 0.16 + railHeight, railZ);
-    topRail.castShadow = true;
-    topRail.receiveShadow = true;
-    bridgeGroup.add(topRail);
-
-    const lowerCurb = new THREE.Mesh(lowerCurbGeo, trimMat);
-    lowerCurb.position.set(0, deckY + 0.22, railZ);
-    lowerCurb.castShadow = true;
-    lowerCurb.receiveShadow = true;
-    bridgeGroup.add(lowerCurb);
-  }
-
-  const pierGeo = new THREE.BoxGeometry(0.36, railHeight + 0.18, 0.28);
-  options.disposables.geometries.push(pierGeo);
-  const pierXs = [-9.6, -6.4, -3.2, 0, 3.2, 6.4, 9.6];
-  const pierMatrices: THREE.Matrix4[] = [];
-  for (const px of pierXs) {
-    for (const sideSign of [-1, 1]) {
-      dummy.position.set(
-        px,
-        deckY + 0.16 + (railHeight + 0.14) * 0.5,
-        bridgeZ + sideSign * (deckDepth * 0.5 - 0.08),
-      );
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      pierMatrices.push(dummy.matrix.clone());
-    }
-  }
-  const piersMesh = new THREE.InstancedMesh(pierGeo, concreteMat, pierMatrices.length);
-  piersMesh.castShadow = true;
-  piersMesh.receiveShadow = true;
-  for (let i = 0; i < pierMatrices.length; i++) {
-    const m = pierMatrices[i];
-    if (m) {
-      piersMesh.setMatrixAt(i, m);
-    }
-  }
-  piersMesh.instanceMatrix.needsUpdate = true;
-  bridgeGroup.add(piersMesh);
-
-  const balusterGeo = new THREE.BoxGeometry(0.09, railHeight - 0.12, 0.1);
-  options.disposables.geometries.push(balusterGeo);
-  const balusterMatrices: THREE.Matrix4[] = [];
-  const balusterCount = 42;
-  for (let i = 1; i < balusterCount; i++) {
-    const t = i / balusterCount;
-    const bx = -halfSpan + 0.6 + t * (halfSpan * 2 - 1.2);
-    for (const sideSign of [-1, 1]) {
-      dummy.position.set(
-        bx,
-        deckY + 0.22 + (railHeight - 0.1) * 0.5,
-        bridgeZ + sideSign * (deckDepth * 0.5 - 0.08),
-      );
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      balusterMatrices.push(dummy.matrix.clone());
-    }
-  }
-  const balustersMesh = new THREE.InstancedMesh(balusterGeo, trimMat, balusterMatrices.length);
-  balustersMesh.castShadow = true;
-  balustersMesh.receiveShadow = true;
-  for (let i = 0; i < balusterMatrices.length; i++) {
-    const m = balusterMatrices[i];
-    if (m) {
-      balustersMesh.setMatrixAt(i, m);
-    }
-  }
-  balustersMesh.instanceMatrix.needsUpdate = true;
-  bridgeGroup.add(balustersMesh);
-
-  return bridgeGroup;
-}
-
-function createFracturedBasaltButtressGeometry(seed: number): THREE.BufferGeometry {
-  const geo = new THREE.IcosahedronGeometry(1.0, 3);
-  const posAttr = geo.attributes.position;
-  if (!posAttr) {
-    return geo;
-  }
-
-  for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i);
-    const z = posAttr.getZ(i);
-
-    const ridged = ridgedMultifractal2d({
-      x: x * 1.65 + y * 0.72 + seed * 0.17,
-      z: z * 1.65 - y * 0.68 + seed * 0.31,
-      octaves: 4,
-    });
-    const stepLedge = Math.sin(y * 7.5 + ridged * 2.2) * 0.085;
-    const angularCrack = Math.abs(Math.sin(x * 4.2 + z * 3.8 + seed)) * 0.12;
-    const overhangBias = y > 0.1 ? 1.0 + y * 0.16 : 0.92;
-    const radialScale = (0.72 + ridged * 0.44 + stepLedge - angularCrack) * overhangBias;
-
-    posAttr.setXYZ(i, x * radialScale, y * (0.94 + ridged * 0.16), z * radialScale);
-  }
-
-  geo.computeVertexNormals();
-  return geo;
-}
-
-function generateForestGorgeButtressLayout(): readonly RockPlacement[] {
-  const rand = createSeededRandom(31904);
-  const placements: RockPlacement[] = [];
-
-  for (let side of [-1, 1]) {
-    for (let layer = 0; layer < 4; layer++) {
-      const y = 3.2 + layer * 4.4 + (rand() - 0.5) * 1.1;
-      const x = side * (6.8 + layer * 0.75 + rand() * 1.8);
-      const z = -15.2 + layer * 1.5 + (rand() - 0.5) * 2.2;
-      placements.push({
-        x,
-        y,
-        z,
-        sx: 3.4 + rand() * 2.2,
-        sy: 3.8 + rand() * 2.4,
-        sz: 3.8 + rand() * 2.4,
-        rx: (rand() - 0.5) * 0.18,
-        ry: rand() * Math.PI * 2,
-        rz: side * (-0.08 + rand() * 0.18),
-      });
-    }
-
-    for (let k = 0; k < 5; k++) {
-      const z = -10.5 + k * 4.6 + (rand() - 0.5) * 1.4;
-      const x = side * (7.6 + k * 0.8 + rand() * 2.4);
-      const gy = computeForestCanyonTerrainHeight({ x, z });
-      placements.push({
-        x,
-        y: Math.max(2.2, gy - 1.4),
-        z,
-        sx: 3.2 + rand() * 2.5,
-        sy: 3.6 + rand() * 2.8,
-        sz: 3.6 + rand() * 2.6,
-        rx: (rand() - 0.5) * 0.2,
-        ry: rand() * Math.PI * 2,
-        rz: (rand() - 0.5) * 0.2,
-      });
-    }
-
-    for (let u = 0; u < 6; u++) {
-      const x = side * (3.2 + u * 2.5 + (rand() - 0.5) * 0.9);
-      const cliffZ = computeForestEscarpmentZ(x);
-      const y = 17.5 + (u % 3) * 5.2 + rand() * 2.4;
-      placements.push({
-        x,
-        y,
-        z: cliffZ - 0.6 + (rand() - 0.5) * 1.2,
-        sx: 3.6 + rand() * 2.4,
-        sy: 4.4 + rand() * 2.6,
-        sz: 2.8 + rand() * 1.8,
-        rx: (rand() - 0.5) * 0.16,
-        ry: rand() * Math.PI * 2,
-        rz: (rand() - 0.5) * 0.16,
-      });
-    }
-  }
-
-  for (let b = 0; b < 8; b++) {
-    const x = -5.5 + (b / 7) * 11.0;
-    const y = 14.5 + (b % 3) * 6.0 + rand() * 1.6;
-    const cliffZ = computeForestEscarpmentZ(x);
-    placements.push({
-      x,
-      y,
-      z: cliffZ - 1.1,
-      sx: 2.9 + rand() * 1.8,
-      sy: 3.8 + rand() * 2.2,
-      sz: 2.4 + rand() * 1.4,
-      rx: (rand() - 0.5) * 0.15,
-      ry: rand() * Math.PI * 2,
-      rz: (rand() - 0.5) * 0.15,
-    });
-  }
-
-  return placements;
 }
 
 function createBeveledHexColumnGeometry(): THREE.BufferGeometry {
@@ -1065,7 +559,7 @@ function createBeveledHexColumnGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
-function createWarpedTerrainGeometry(presetId: WaterfallPresetId): THREE.BufferGeometry {
+function createWarpedTerrainGeometry(): THREE.BufferGeometry {
   const segments = 192;
   const geometry = new THREE.PlaneGeometry(2, 2, segments, segments);
   geometry.rotateX(-Math.PI / 2);
@@ -1075,15 +569,12 @@ function createWarpedTerrainGeometry(presetId: WaterfallPresetId): THREE.BufferG
     return geometry;
   }
 
-  const heightFn =
-    presetId === 'forest' ? computeForestCanyonTerrainHeight : computeOpenVolcanicTerrainHeight;
-
   for (let i = 0; i < posAttr.count; i++) {
     const nx = posAttr.getX(i);
     const nz = posAttr.getZ(i);
     const x = warpTerrainCoordinate(nx);
     const z = warpTerrainCoordinate(nz) - 8.0;
-    const y = heightFn({ x, z });
+    const y = computeOpenVolcanicTerrainHeight({ x, z });
     posAttr.setXYZ(i, x, y, z);
   }
 
@@ -1111,99 +602,75 @@ function normalizeRockGeometry(rawGeometry: THREE.BufferGeometry): THREE.BufferG
   return cloned;
 }
 
-function computeTerrainSlope(options: {
-  readonly x: number;
-  readonly z: number;
-  readonly presetId: WaterfallPresetId;
-}): number {
+function computeTerrainSlope(coords: { readonly x: number; readonly z: number }): number {
   const eps = 0.65;
-  const heightFn =
-    options.presetId === 'forest'
-      ? computeForestCanyonTerrainHeight
-      : computeOpenVolcanicTerrainHeight;
-  const hC = heightFn({ x: options.x, z: options.z });
-  const hR = heightFn({ x: options.x + eps, z: options.z });
-  const hF = heightFn({ x: options.x, z: options.z + eps });
+  const hC = computeOpenVolcanicTerrainHeight({ x: coords.x, z: coords.z });
+  const hR = computeOpenVolcanicTerrainHeight({ x: coords.x + eps, z: coords.z });
+  const hF = computeOpenVolcanicTerrainHeight({ x: coords.x, z: coords.z + eps });
   return Math.hypot((hR - hC) / eps, (hF - hC) / eps);
 }
 
-function buildRockPlacements(presetId: WaterfallPresetId): {
+function buildRockPlacements(): {
   readonly heroBoulders: RockPlacement[];
   readonly mediumRocks: RockPlacement[];
   readonly screeRocks: RockPlacement[];
 } {
-  const rand = createSeededRandom(presetId === 'forest' ? 77411 : 55123);
-  const isForest = presetId === 'forest';
-  const heightFn = isForest ? computeForestCanyonTerrainHeight : computeOpenVolcanicTerrainHeight;
-  const cliffZFn = isForest ? computeForestEscarpmentZ : computeEscarpmentLineZ;
-  const riverXFn = isForest ? computeForestRiverCenterX : computeRiverCenterX;
-
+  const rand = createSeededRandom(55123);
   const heroBoulders: RockPlacement[] = [];
 
-  if (!isForest) {
-    const crestRockXs = [-5.4, -3.5, -1.9, 1.3, 3.4, 5.5];
-    for (let i = 0; i < crestRockXs.length; i++) {
-      const rx = crestRockXs[i] ?? 0;
-      const isFlank = Math.abs(rx) > 4.5;
-      const lipZ = computeEscarpmentLineZ(rx) + (isFlank ? 0.1 : -0.15);
-      const lipY = computeWaterfallCrestHeight(rx) - (isFlank ? 0.4 : 0.72);
-      const baseS = isFlank ? 2.25 : 1.15 + (i % 3) * 0.28;
-      heroBoulders.push({
-        x: rx,
-        y: lipY,
-        z: lipZ,
-        sx: baseS * (1.0 + rand() * 0.28),
-        sy: baseS * (0.72 + rand() * 0.25),
-        sz: baseS * (1.05 + rand() * 0.35),
-        rx: (rand() - 0.5) * 0.2,
-        ry: rand() * Math.PI * 2,
-        rz: (rand() - 0.5) * 0.2,
-      });
-    }
-
-    const backingLedges = [
-      { x: -3.6, y: 10.6, zOffset: 1.35, sx: 2.8, sy: 2.2, sz: 2.9 },
-      { x: -1.4, y: 15.8, zOffset: 0.45, sx: 2.9, sy: 2.5, sz: 3.1 },
-      { x: 1.9, y: 13.4, zOffset: 0.35, sx: 3.1, sy: 2.4, sz: 3.0 },
-      { x: 4.1, y: 8.8, zOffset: 0.9, sx: 2.7, sy: 2.3, sz: 2.8 },
-      { x: -4.4, y: 5.2, zOffset: 1.6, sx: 2.9, sy: 2.4, sz: 2.8 },
-      { x: 0.2, y: 18.4, zOffset: -0.1, sx: 3.3, sy: 2.2, sz: 3.2 },
-    ];
-    for (const ledge of backingLedges) {
-      heroBoulders.push({
-        x: ledge.x,
-        y: ledge.y,
-        z: computeEscarpmentLineZ(ledge.x) + ledge.zOffset,
-        sx: ledge.sx,
-        sy: ledge.sy,
-        sz: ledge.sz,
-        rx: (rand() - 0.5) * 0.25,
-        ry: rand() * Math.PI * 2,
-        rz: (rand() - 0.5) * 0.25,
-      });
-    }
+  const crestRockXs = [-5.4, -3.5, -1.9, 1.3, 3.4, 5.5];
+  for (let i = 0; i < crestRockXs.length; i++) {
+    const rx = crestRockXs[i] ?? 0;
+    const isFlank = Math.abs(rx) > 4.5;
+    const lipZ = computeEscarpmentLineZ(rx) + (isFlank ? 0.1 : -0.15);
+    const lipY = computeWaterfallCrestHeight(rx) - (isFlank ? 0.4 : 0.72);
+    const baseS = isFlank ? 2.25 : 1.15 + (i % 3) * 0.28;
+    heroBoulders.push({
+      x: rx,
+      y: lipY,
+      z: lipZ,
+      sx: baseS * (1.0 + rand() * 0.28),
+      sy: baseS * (0.72 + rand() * 0.25),
+      sz: baseS * (1.05 + rand() * 0.35),
+      rx: (rand() - 0.5) * 0.2,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.2,
+    });
   }
 
-  const foregroundAnchors = isForest
-    ? [
-        { x: 7.8, z: 13.8, sx: 2.2, sy: 1.3, sz: 1.9 },
-        { x: -8.6, z: 11.4, sx: 2.4, sy: 1.4, sz: 2.1 },
-        { x: 10.4, z: 6.4, sx: 2.8, sy: 1.7, sz: 2.3 },
-        { x: -10.8, z: 5.6, sx: 2.9, sy: 1.8, sz: 2.4 },
-        { x: 9.4, z: 19.6, sx: 1.8, sy: 1.05, sz: 1.55 },
-        { x: -7.2, z: 17.5, sx: 1.6, sy: 0.95, sz: 1.45 },
-      ]
-    : [
-        { x: 7.4, z: 12.8, sx: 2.1, sy: 1.25, sz: 1.8 },
-        { x: -8.4, z: 10.6, sx: 2.4, sy: 1.4, sz: 2.0 },
-        { x: 10.2, z: 5.4, sx: 2.7, sy: 1.7, sz: 2.2 },
-        { x: -10.8, z: 4.6, sx: 2.9, sy: 1.8, sz: 2.3 },
-        { x: 9.2, z: 18.8, sx: 1.7, sy: 1.0, sz: 1.45 },
-        { x: 4.8, z: 15.4, sx: 1.25, sy: 0.72, sz: 1.1 },
-      ];
+  const backingLedges = [
+    { x: -3.6, y: 10.6, zOffset: 1.35, sx: 2.8, sy: 2.2, sz: 2.9 },
+    { x: -1.4, y: 15.8, zOffset: 0.45, sx: 2.9, sy: 2.5, sz: 3.1 },
+    { x: 1.9, y: 13.4, zOffset: 0.35, sx: 3.1, sy: 2.4, sz: 3.0 },
+    { x: 4.1, y: 8.8, zOffset: 0.9, sx: 2.7, sy: 2.3, sz: 2.8 },
+    { x: -4.4, y: 5.2, zOffset: 1.6, sx: 2.9, sy: 2.4, sz: 2.8 },
+    { x: 0.2, y: 18.4, zOffset: -0.1, sx: 3.3, sy: 2.2, sz: 3.2 },
+  ];
+  for (const ledge of backingLedges) {
+    heroBoulders.push({
+      x: ledge.x,
+      y: ledge.y,
+      z: computeEscarpmentLineZ(ledge.x) + ledge.zOffset,
+      sx: ledge.sx,
+      sy: ledge.sy,
+      sz: ledge.sz,
+      rx: (rand() - 0.5) * 0.25,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.25,
+    });
+  }
+
+  const foregroundAnchors = [
+    { x: 7.4, z: 12.8, sx: 2.1, sy: 1.25, sz: 1.8 },
+    { x: -8.4, z: 10.6, sx: 2.4, sy: 1.4, sz: 2.0 },
+    { x: 10.2, z: 5.4, sx: 2.7, sy: 1.7, sz: 2.2 },
+    { x: -10.8, z: 4.6, sx: 2.9, sy: 1.8, sz: 2.3 },
+    { x: 9.2, z: 18.8, sx: 1.7, sy: 1.0, sz: 1.45 },
+    { x: 4.8, z: 15.4, sx: 1.25, sy: 0.72, sz: 1.1 },
+  ];
 
   for (const anchor of foregroundAnchors) {
-    const gy = heightFn({ x: anchor.x, z: anchor.z });
+    const gy = computeOpenVolcanicTerrainHeight({ x: anchor.x, z: anchor.z });
     heroBoulders.push({
       x: anchor.x,
       y: gy - anchor.sy * 0.36,
@@ -1223,14 +690,14 @@ function buildRockPlacements(presetId: WaterfallPresetId): {
   for (let i = 0; i < 120 && mediumRocks.length < 54; i++) {
     const side = i % 2 === 0 ? -1 : 1;
     const x = side * (7.2 + rand() * 24.0);
-    const cliffZ = cliffZFn(x);
+    const cliffZ = computeEscarpmentLineZ(x);
     const z = cliffZ + 5.2 + rand() * 15.0;
-    const slope = computeTerrainSlope({ x, z, presetId });
+    const slope = computeTerrainSlope({ x, z });
     if (slope > 0.65) {
       continue;
     }
 
-    const groundY = heightFn({ x, z });
+    const groundY = computeOpenVolcanicTerrainHeight({ x, z });
     const s = 0.8 + Math.pow(rand(), 1.45) * 2.1;
 
     mediumRocks.push({
@@ -1249,24 +716,24 @@ function buildRockPlacements(presetId: WaterfallPresetId): {
   for (let i = 0; i < 160 && screeRocks.length < 105; i++) {
     const side = i % 2 === 0 ? -1 : 1;
     const z = -6.0 + rand() * 48.0;
-    const riverCenter = riverXFn(z);
+    const riverCenter = computeRiverCenterX(z);
     const riverHalfWidth =
-      (isForest ? 6.2 : 7.4) +
+      7.4 +
       Math.exp(-Math.pow((z - (SCENE_CONFIG.plungeCenterZ + 4)) / 10, 2)) * 5.2 +
       smoothstep({ edge0: 14, edge1: 95, value: z }) * 8.6;
 
     const bankOffset = (rand() - 0.22) * 22.0;
     const x = riverCenter + side * (riverHalfWidth + bankOffset);
-    if (z < cliffZFn(x) + 5.5) {
+    if (z < computeEscarpmentLineZ(x) + 5.5) {
       continue;
     }
 
-    const slope = computeTerrainSlope({ x, z, presetId });
+    const slope = computeTerrainSlope({ x, z });
     if (slope > 0.65) {
       continue;
     }
 
-    const groundY = heightFn({ x, z });
+    const groundY = computeOpenVolcanicTerrainHeight({ x, z });
     const s = 0.32 + Math.pow(rand(), 1.8) * 1.4;
     screeRocks.push({
       x,
@@ -1291,7 +758,6 @@ function loadPhotogrammetryRockInstances(options: {
   readonly group: THREE.Group;
   readonly anisotropy: number;
   readonly tintRgb: readonly [number, number, number];
-  readonly overrideMaterial: THREE.Material | null;
   readonly isDisposed: () => boolean;
   readonly disposables: {
     readonly geometries: THREE.BufferGeometry[];
@@ -1324,38 +790,32 @@ function loadPhotogrammetryRockInstances(options: {
           return;
         }
 
-        let material: THREE.Material;
-        if (options.overrideMaterial) {
-          material = options.overrideMaterial;
-        } else {
-          const rawMat = Array.isArray(firstMesh.material)
-            ? firstMesh.material[0]
-            : firstMesh.material;
-          let stdMat: THREE.MeshStandardMaterial;
+        const rawMat = Array.isArray(firstMesh.material)
+          ? firstMesh.material[0]
+          : firstMesh.material;
+        let stdMat: THREE.MeshStandardMaterial;
 
-          if (rawMat instanceof THREE.MeshStandardMaterial) {
-            stdMat = rawMat.clone();
-            stdMat.color.setRGB(options.tintRgb[0], options.tintRgb[1], options.tintRgb[2]);
-            stdMat.roughness = 0.66;
-            stdMat.metalness = 0.04;
-            stdMat.envMapIntensity = 1.3;
-            if (stdMat.map) {
-              stdMat.map.anisotropy = options.anisotropy;
-            }
-            if (stdMat.normalMap) {
-              stdMat.normalMap.anisotropy = options.anisotropy;
-              stdMat.normalScale.set(1.35, 1.35);
-            }
-          } else {
-            stdMat = new THREE.MeshStandardMaterial({
-              color: new THREE.Color(0x22262c),
-              roughness: 0.72,
-              metalness: 0.05,
-            });
+        if (rawMat instanceof THREE.MeshStandardMaterial) {
+          stdMat = rawMat.clone();
+          stdMat.color.setRGB(options.tintRgb[0], options.tintRgb[1], options.tintRgb[2]);
+          stdMat.roughness = 0.66;
+          stdMat.metalness = 0.04;
+          stdMat.envMapIntensity = 1.3;
+          if (stdMat.map) {
+            stdMat.map.anisotropy = options.anisotropy;
           }
-          options.disposables.materials.push(stdMat);
-          material = stdMat;
+          if (stdMat.normalMap) {
+            stdMat.normalMap.anisotropy = options.anisotropy;
+            stdMat.normalScale.set(1.35, 1.35);
+          }
+        } else {
+          stdMat = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(0x22262c),
+            roughness: 0.72,
+            metalness: 0.05,
+          });
         }
+        options.disposables.materials.push(stdMat);
 
         const variantCount = Math.min(sourceMeshes.length, 4);
         const buckets: RockPlacement[][] = Array.from({ length: variantCount }, () => []);
@@ -1377,7 +837,7 @@ function loadPhotogrammetryRockInstances(options: {
           const geometry = normalizeRockGeometry(mesh.geometry);
           options.disposables.geometries.push(geometry);
 
-          const instanced = new THREE.InstancedMesh(geometry, material, bucket.length);
+          const instanced = new THREE.InstancedMesh(geometry, stdMat, bucket.length);
           instanced.castShadow = true;
           instanced.receiveShadow = true;
 
@@ -1411,249 +871,124 @@ function loadPhotogrammetryRockInstances(options: {
 
 export function createIcelandicCliff(options: {
   readonly noiseTexture: THREE.DataTexture;
-  readonly icelandTextures: IcelandTextureSets | null;
-  readonly forestTextures: ForestTextureSets | null;
+  readonly icelandTextures: IcelandTextureSets;
   readonly anisotropy: number;
-  readonly presetId: WaterfallPresetId;
   readonly onStaticGeometryChanged: () => void;
   readonly onAssetLoaded?: (label: string) => void;
 }): CliffSystem {
   const group = new THREE.Group();
   const timeUniform = { value: 0 };
   let disposed = false;
-  const isForest = options.presetId === 'forest';
 
-  const forestSets = options.forestTextures;
-  const icelandSets = options.icelandTextures;
-  const primaryRock = isForest
-    ? (forestSets?.forestCliff ?? icelandSets?.basalt)
-    : (icelandSets?.basalt ?? forestSets?.forestCliff);
-  const mossyRock = forestSets?.forestMossyRock ?? primaryRock;
-  const mossSet = isForest
-    ? (forestSets?.moss ?? icelandSets?.moss)
-    : (icelandSets?.moss ?? forestSets?.moss);
-  const secondaryFloor = isForest
-    ? (forestSets?.forestFloor ?? icelandSets?.volcanicSand)
-    : (icelandSets?.volcanicSand ?? forestSets?.forestFloor);
-
-  if (!primaryRock || !mossyRock || !mossSet || !secondaryFloor) {
-    return {
-      group,
-      ready: Promise.resolve(),
-      update: () => undefined,
-      dispose: () => {
-        disposed = true;
-      },
-    };
-  }
-
+  const { basalt, moss, volcanicSand } = options.icelandTextures;
   const terrainUniforms: TerrainShaderUniforms = {
     uTime: timeUniform,
     uNoiseTex: { value: options.noiseTexture },
-    uBasaltAlbedo: { value: primaryRock.albedoMap },
-    uBasaltNormal: { value: primaryRock.normalMap },
-    uBasaltRma: { value: primaryRock.rmaMap },
-    uMossyRockAlbedo: { value: mossyRock.albedoMap },
-    uMossyRockNormal: { value: mossyRock.normalMap },
-    uMossyRockRma: { value: mossyRock.rmaMap },
-    uMossAlbedo: { value: mossSet.albedoMap },
-    uMossNormal: { value: mossSet.normalMap },
-    uMossRma: { value: mossSet.rmaMap },
-    uSandAlbedo: { value: secondaryFloor.albedoMap },
-    uSandNormal: { value: secondaryFloor.normalMap },
-    uSandRma: { value: secondaryFloor.rmaMap },
+    uBasaltAlbedo: { value: basalt.albedoMap },
+    uBasaltNormal: { value: basalt.normalMap },
+    uBasaltRma: { value: basalt.rmaMap },
+    uMossAlbedo: { value: moss.albedoMap },
+    uMossNormal: { value: moss.normalMap },
+    uMossRma: { value: moss.rmaMap },
+    uSandAlbedo: { value: volcanicSand.albedoMap },
+    uSandNormal: { value: volcanicSand.normalMap },
+    uSandRma: { value: volcanicSand.rmaMap },
   };
 
-  const terrainMaterial = createTriplanarTerrainMaterial({
-    uniforms: terrainUniforms,
-    presetId: options.presetId,
-  });
-
+  const terrainMaterial = createTriplanarTerrainMaterial(terrainUniforms);
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [terrainMaterial];
   const disposables = { geometries, materials };
 
-  const terrainGeometry = createWarpedTerrainGeometry(options.presetId);
+  const terrainGeometry = createWarpedTerrainGeometry();
   disposables.geometries.push(terrainGeometry);
   const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
   terrainMesh.receiveShadow = true;
   terrainMesh.castShadow = true;
   group.add(terrainMesh);
 
-  if (isForest && forestSets) {
-    const stoneBridge = createForestStoneBridge({
-      bridgeStone: forestSets.bridgeStone,
-      disposables,
-    });
-    group.add(stoneBridge);
+  const columnMaterial = createBasaltColumnMaterial({
+    basalt,
+    moss,
+    noiseTexture: options.noiseTexture,
+    timeUniform,
+  });
+  disposables.materials.push(columnMaterial);
 
-    const buttressLayout = generateForestGorgeButtressLayout();
-    const buttressGeoA = createFracturedBasaltButtressGeometry(17);
-    const buttressGeoB = createFracturedBasaltButtressGeometry(43);
-    disposables.geometries.push(buttressGeoA, buttressGeoB);
+  const columnGeometry = createBeveledHexColumnGeometry();
+  disposables.geometries.push(columnGeometry);
 
-    const bucketA: RockPlacement[] = [];
-    const bucketB: RockPlacement[] = [];
-    for (let i = 0; i < buttressLayout.length; i++) {
-      const item = buttressLayout[i];
-      if (!item) {
-        continue;
-      }
-      if (i % 2 === 0) {
-        bucketA.push(item);
-      } else {
-        bucketB.push(item);
-      }
+  const placements = generateBasaltColumnLayout({
+    seed: 202611,
+    hexRadius: 0.82,
+    rowsDeep: 4,
+    halfSpanX: 28,
+  });
+
+  const columnInstanced = new THREE.InstancedMesh(
+    columnGeometry,
+    columnMaterial,
+    placements.length,
+  );
+  columnInstanced.castShadow = true;
+  columnInstanced.receiveShadow = true;
+
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < placements.length; i++) {
+    const column = placements[i];
+    if (!column) {
+      continue;
     }
-
-    const dummy = new THREE.Object3D();
-    const pairs: ReadonlyArray<{
-      readonly geo: THREE.BufferGeometry;
-      readonly items: readonly RockPlacement[];
-    }> = [
-      { geo: buttressGeoA, items: bucketA },
-      { geo: buttressGeoB, items: bucketB },
-    ];
-    for (const pair of pairs) {
-      const inst = new THREE.InstancedMesh(pair.geo, terrainMaterial, pair.items.length);
-      inst.castShadow = true;
-      inst.receiveShadow = true;
-      for (let i = 0; i < pair.items.length; i++) {
-        const spec = pair.items[i];
-        if (!spec) {
-          continue;
-        }
-        dummy.position.set(spec.x, spec.y, spec.z);
-        dummy.rotation.set(spec.rx, spec.ry, spec.rz);
-        dummy.scale.set(spec.sx, spec.sy, spec.sz);
-        dummy.updateMatrix();
-        inst.setMatrixAt(i, dummy.matrix);
-      }
-      inst.instanceMatrix.needsUpdate = true;
-      group.add(inst);
-    }
-  } else if (icelandSets) {
-    const columnMaterial = createBasaltColumnMaterial({
-      basalt: icelandSets.basalt,
-      moss: icelandSets.moss,
-      noiseTexture: options.noiseTexture,
-      timeUniform,
-      presetId: options.presetId,
-    });
-    disposables.materials.push(columnMaterial);
-
-    const columnGeometry = createBeveledHexColumnGeometry();
-    disposables.geometries.push(columnGeometry);
-
-    const placements = generateBasaltColumnLayout({
-      seed: 202611,
-      hexRadius: 0.82,
-      rowsDeep: 4,
-      halfSpanX: 28,
-    });
-
-    const columnInstanced = new THREE.InstancedMesh(
-      columnGeometry,
-      columnMaterial,
-      placements.length,
-    );
-    columnInstanced.castShadow = true;
-    columnInstanced.receiveShadow = true;
-
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < placements.length; i++) {
-      const column = placements[i];
-      if (!column) {
-        continue;
-      }
-      dummy.position.set(column.x, column.y, column.z);
-      dummy.rotation.set(column.tiltX, column.rotationY, column.tiltZ);
-      dummy.scale.set(column.radius, column.height, column.radius);
-      dummy.updateMatrix();
-      columnInstanced.setMatrixAt(i, dummy.matrix);
-    }
-    columnInstanced.instanceMatrix.needsUpdate = true;
-    group.add(columnInstanced);
+    dummy.position.set(column.x, column.y, column.z);
+    dummy.rotation.set(column.tiltX, column.rotationY, column.tiltZ);
+    dummy.scale.set(column.radius, column.height, column.radius);
+    dummy.updateMatrix();
+    columnInstanced.setMatrixAt(i, dummy.matrix);
   }
+  columnInstanced.instanceMatrix.needsUpdate = true;
+  group.add(columnInstanced);
 
-  const rockGroups = buildRockPlacements(options.presetId);
+  const rockGroups = buildRockPlacements();
   const isDisposed = () => disposed;
-  const rockLoadPromises: Promise<void>[] = [];
 
-  if (isForest) {
-    rockLoadPromises.push(
-      loadPhotogrammetryRockInstances({
-        url: '/models/boulder_01/boulder_01_1k.gltf',
-        label: 'Loading 3D mossy canyon boulders',
-        placements: [...rockGroups.heroBoulders, ...rockGroups.mediumRocks],
-        group,
-        anisotropy: options.anisotropy,
-        tintRgb: [0.46, 0.44, 0.42],
-        overrideMaterial: terrainMaterial,
-        isDisposed,
-        disposables,
-        onLoaded: options.onStaticGeometryChanged,
-        onAssetLoaded: options.onAssetLoaded,
-      }),
-      loadPhotogrammetryRockInstances({
-        url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
-        label: 'Loading 3D riverbank stones',
-        placements: rockGroups.screeRocks,
-        group,
-        anisotropy: options.anisotropy,
-        tintRgb: [0.42, 0.4, 0.38],
-        overrideMaterial: terrainMaterial,
-        isDisposed,
-        disposables,
-        onLoaded: options.onStaticGeometryChanged,
-        onAssetLoaded: options.onAssetLoaded,
-      }),
-    );
-  } else {
-    rockLoadPromises.push(
-      loadPhotogrammetryRockInstances({
-        url: '/models/boulder_01/boulder_01_1k.gltf',
-        label: 'Loading 3D volcanic cliff boulders',
-        placements: rockGroups.heroBoulders,
-        group,
-        anisotropy: options.anisotropy,
-        tintRgb: [0.46, 0.5, 0.56],
-        overrideMaterial: null,
-        isDisposed,
-        disposables,
-        onLoaded: options.onStaticGeometryChanged,
-        onAssetLoaded: options.onAssetLoaded,
-      }),
-      loadPhotogrammetryRockInstances({
-        url: '/models/moon_rock_01/moon_rock_01_1k.gltf',
-        label: 'Loading 3D talus boulders',
-        placements: rockGroups.mediumRocks,
-        group,
-        anisotropy: options.anisotropy,
-        tintRgb: [0.46, 0.5, 0.56],
-        overrideMaterial: null,
-        isDisposed,
-        disposables,
-        onLoaded: options.onStaticGeometryChanged,
-        onAssetLoaded: options.onAssetLoaded,
-      }),
-      loadPhotogrammetryRockInstances({
-        url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
-        label: 'Loading 3D scree rocks',
-        placements: rockGroups.screeRocks,
-        group,
-        anisotropy: options.anisotropy,
-        tintRgb: [0.46, 0.5, 0.56],
-        overrideMaterial: null,
-        isDisposed,
-        disposables,
-        onLoaded: options.onStaticGeometryChanged,
-        onAssetLoaded: options.onAssetLoaded,
-      }),
-    );
-  }
-
-  const ready = Promise.all(rockLoadPromises).then(() => undefined);
+  const ready = Promise.all([
+    loadPhotogrammetryRockInstances({
+      url: '/models/boulder_01/boulder_01_1k.gltf',
+      label: 'Loading 3D volcanic cliff boulders',
+      placements: rockGroups.heroBoulders,
+      group,
+      anisotropy: options.anisotropy,
+      tintRgb: [0.46, 0.5, 0.56],
+      isDisposed,
+      disposables,
+      onLoaded: options.onStaticGeometryChanged,
+      onAssetLoaded: options.onAssetLoaded,
+    }),
+    loadPhotogrammetryRockInstances({
+      url: '/models/moon_rock_01/moon_rock_01_1k.gltf',
+      label: 'Loading 3D talus boulders',
+      placements: rockGroups.mediumRocks,
+      group,
+      anisotropy: options.anisotropy,
+      tintRgb: [0.46, 0.5, 0.56],
+      isDisposed,
+      disposables,
+      onLoaded: options.onStaticGeometryChanged,
+      onAssetLoaded: options.onAssetLoaded,
+    }),
+    loadPhotogrammetryRockInstances({
+      url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
+      label: 'Loading 3D scree rocks',
+      placements: rockGroups.screeRocks,
+      group,
+      anisotropy: options.anisotropy,
+      tintRgb: [0.46, 0.5, 0.56],
+      isDisposed,
+      disposables,
+      onLoaded: options.onStaticGeometryChanged,
+      onAssetLoaded: options.onAssetLoaded,
+    }),
+  ]).then(() => undefined);
 
   return {
     group,

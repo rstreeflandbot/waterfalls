@@ -3,37 +3,27 @@ import { LoadingOverlayState } from '../ui/hud';
 import { createCameraController } from './cameraController';
 import { CliffSystem, createIcelandicCliff } from './cliff';
 import { FoliageSystem, createHighlandFoliage } from './foliage';
-import { ForestVegetationSystem, createForestVegetation } from './forestVegetation';
+import { ICELAND_WATERFALL_CONFIG } from './icelandConfig';
 import { LightingSystem, createIcelandicLighting } from './lighting';
 import { ParticleSystem, createWaterfallParticles } from './particles';
-import { ForestTextureSets, IcelandTextureSets, createWaterfallTextureBundle } from './pbrTextures';
+import { createWaterfallTextureBundle } from './pbrTextures';
 import { createPostProcessing } from './postprocessing';
 import { createProceduralNoiseTexture } from './proceduralTextures';
 import { SkySystem, createIcelandicSky } from './sky';
 import { createGlacialWaterPool } from './waterPool';
 import { WaterfallSystem, createIcelandicWaterfall } from './waterfall';
-import {
-  WATERFALL_PRESETS,
-  WaterfallPresetConfig,
-  WaterfallPresetId,
-  getNextWaterfallPresetId,
-} from './waterfallPresets';
 
 export interface WaterfallSceneController {
-  readonly getPreset: () => WaterfallPresetConfig;
-  readonly switchWaterfall: () => Promise<WaterfallPresetConfig>;
   readonly toggleDrift: () => boolean;
   readonly resetCameraView: () => void;
   readonly dispose: () => void;
 }
 
-interface ActiveBiomeInstances {
-  readonly preset: WaterfallPresetConfig;
+interface SceneSystems {
   readonly sky: SkySystem;
   readonly lighting: LightingSystem;
   readonly cliff: CliffSystem;
-  readonly foliage: FoliageSystem | null;
-  readonly forestVegetation: ForestVegetationSystem | null;
+  readonly foliage: FoliageSystem;
   readonly waterfall: WaterfallSystem;
   readonly particles: ParticleSystem;
 }
@@ -133,6 +123,7 @@ export function createWaterfallScene(options: {
   readonly onLoadProgress?: (state: LoadingOverlayState) => void;
 }): WaterfallSceneController {
   const { container, onLoadProgress } = options;
+  const config = ICELAND_WATERFALL_CONFIG;
   const initialWidth = Math.max(container.clientWidth, 1);
   const initialHeight = Math.max(container.clientHeight, 1);
 
@@ -165,15 +156,14 @@ export function createWaterfallScene(options: {
   const reflWidth = Math.max(1, Math.floor(currentRenderWidth * reflectionScale));
   const reflHeight = Math.max(1, Math.floor(currentRenderHeight * reflectionScale));
 
-  const initialPreset = WATERFALL_PRESETS.iceland;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(46, initialWidth / initialHeight, 0.25, 520);
   const reflectionCamera = new THREE.PerspectiveCamera(46, initialWidth / initialHeight, 0.25, 520);
   const cameraController = createCameraController({
     camera,
     domElement: renderer.domElement,
-    initialPosition: initialPreset.heroCameraPosition,
-    initialTarget: initialPreset.heroCameraTarget,
+    initialPosition: config.heroCameraPosition,
+    initialTarget: config.heroCameraTarget,
   });
 
   const fallbackData = new Uint8Array([255, 255, 255, 255]);
@@ -192,7 +182,7 @@ export function createWaterfallScene(options: {
     noiseTexture,
     foamTexture: textures.waterfallFoam,
     fallbackTexture,
-    preset: initialPreset,
+    config,
   });
   scene.add(waterPool.mesh);
 
@@ -221,39 +211,15 @@ export function createWaterfallScene(options: {
     height: initialHeight,
     isSoftwareGpu,
     isMobileGpu,
-    preset: initialPreset,
+    config,
   });
 
-  let activeBiome: ActiveBiomeInstances | null = null;
-  let activePreset: WaterfallPresetConfig = initialPreset;
+  let systems: SceneSystems | null = null;
   let shadowRefreshNeeded = true;
   let shadowUniformsDirty = true;
   let reflectionDirty = true;
   let frameIndex = 0;
   let isTabHidden = document.visibilityState === 'hidden';
-  let loadGeneration = 0;
-
-  const disposeBiome = (biome: ActiveBiomeInstances) => {
-    scene.remove(biome.sky.mesh);
-    scene.remove(biome.lighting.group);
-    scene.remove(biome.cliff.group);
-    if (biome.foliage) {
-      scene.remove(biome.foliage.mesh);
-      biome.foliage.dispose();
-    }
-    if (biome.forestVegetation) {
-      scene.remove(biome.forestVegetation.group);
-      biome.forestVegetation.dispose();
-    }
-    scene.remove(biome.waterfall.group);
-    scene.remove(biome.particles.group);
-
-    biome.sky.dispose();
-    biome.lighting.dispose();
-    biome.cliff.dispose();
-    biome.waterfall.dispose();
-    biome.particles.dispose();
-  };
 
   const syncSceneTargetUniforms = (dims: { readonly width: number; readonly height: number }) => {
     const depthTex = opaqueTarget.depthTexture ?? fallbackTexture;
@@ -266,8 +232,8 @@ export function createWaterfallScene(options: {
       cameraNear: camera.near,
       cameraFar: camera.far,
     });
-    if (activeBiome) {
-      activeBiome.waterfall.setSceneTextures({
+    if (systems) {
+      systems.waterfall.setSceneTextures({
         colorTexture: opaqueTarget.texture,
         depthTexture: depthTex,
         width: dims.width,
@@ -275,7 +241,7 @@ export function createWaterfallScene(options: {
         cameraNear: camera.near,
         cameraFar: camera.far,
       });
-      activeBiome.particles.setSceneTextures({
+      systems.particles.setSceneTextures({
         depthTexture: depthTex,
         width: dims.width,
         height: dims.height,
@@ -310,22 +276,13 @@ export function createWaterfallScene(options: {
     reflectionCamera.updateMatrixWorld();
   };
 
-  const setVegetationVisible = (biome: ActiveBiomeInstances, visible: boolean) => {
-    if (biome.foliage) {
-      biome.foliage.mesh.visible = visible;
-    }
-    if (biome.forestVegetation) {
-      biome.forestVegetation.group.visible = visible;
-    }
-  };
-
   const renderFrame = (input: {
     readonly elapsedSeconds: number;
     readonly deltaSeconds: number;
     readonly forceReflection: boolean;
   }) => {
-    const biome = activeBiome;
-    if (!biome) {
+    const active = systems;
+    if (!active) {
       return;
     }
 
@@ -333,25 +290,19 @@ export function createWaterfallScene(options: {
       elapsedSeconds: input.elapsedSeconds,
       deltaSeconds: input.deltaSeconds,
     });
-    biome.sky.update(input.elapsedSeconds);
-    biome.lighting.update(input.elapsedSeconds);
-    biome.cliff.update(input.elapsedSeconds);
-    biome.foliage?.update(input.elapsedSeconds);
-    biome.forestVegetation?.update(input.elapsedSeconds);
+    active.sky.update(input.elapsedSeconds);
+    active.lighting.update(input.elapsedSeconds);
+    active.cliff.update(input.elapsedSeconds);
+    active.foliage.update(input.elapsedSeconds);
     waterPool.update(input.elapsedSeconds);
-    biome.waterfall.update(input.elapsedSeconds);
-    biome.particles.update(input.elapsedSeconds);
+    active.waterfall.update(input.elapsedSeconds);
+    active.particles.update(input.elapsedSeconds);
 
     if (shadowRefreshNeeded) {
       waterPool.mesh.visible = false;
-      biome.waterfall.group.visible = false;
-      biome.particles.group.visible = false;
-      if (biome.foliage) {
-        biome.foliage.mesh.visible = false;
-      }
-      if (biome.forestVegetation) {
-        biome.forestVegetation.group.visible = true;
-      }
+      active.waterfall.group.visible = false;
+      active.particles.group.visible = false;
+      active.foliage.mesh.visible = false;
       renderer.shadowMap.needsUpdate = true;
       renderer.setRenderTarget(opaqueTarget);
       renderer.render(scene, camera);
@@ -359,18 +310,17 @@ export function createWaterfallScene(options: {
       shadowUniformsDirty = true;
     }
 
-    const activeShadowTex = biome.lighting.sunLight.shadow.map?.texture ?? fallbackTexture;
+    const activeShadowTex = active.lighting.sunLight.shadow.map?.texture ?? fallbackTexture;
     if (shadowUniformsDirty) {
       const shadowConfig = {
         shadowMap: activeShadowTex,
-        shadowMatrix: biome.lighting.sunLight.shadow.matrix,
-        shadowMapSize: biome.lighting.shadowMapSize,
+        shadowMatrix: active.lighting.sunLight.shadow.matrix,
+        shadowMapSize: active.lighting.shadowMapSize,
       };
-      biome.foliage?.setShadowUniforms(shadowConfig);
-      biome.forestVegetation?.setShadowUniforms(shadowConfig);
+      active.foliage.setShadowUniforms(shadowConfig);
       waterPool.setShadowUniforms(shadowConfig);
-      biome.waterfall.setShadowUniforms(shadowConfig);
-      biome.particles.setShadowUniforms(shadowConfig);
+      active.waterfall.setShadowUniforms(shadowConfig);
+      active.particles.setShadowUniforms(shadowConfig);
       shadowUniformsDirty = false;
     }
 
@@ -379,28 +329,23 @@ export function createWaterfallScene(options: {
     if (shouldUpdateReflection) {
       updateMirroredReflectionCamera();
       waterPool.mesh.visible = false;
-      biome.particles.group.visible = false;
-      if (biome.foliage) {
-        biome.foliage.mesh.visible = false;
-      }
-      if (biome.forestVegetation) {
-        biome.forestVegetation.group.visible = true;
-      }
-      biome.waterfall.group.visible = true;
-      biome.waterfall.setUseDepthPass(false);
+      active.particles.group.visible = false;
+      active.foliage.mesh.visible = false;
+      active.waterfall.group.visible = true;
+      active.waterfall.setUseDepthPass(false);
       renderer.clippingPlanes = waterReflectionClipPlanes;
       renderer.setRenderTarget(reflectionTarget);
       renderer.clear();
       renderer.render(scene, reflectionCamera);
       renderer.clippingPlanes = noClipPlanes;
-      biome.waterfall.setUseDepthPass(true);
+      active.waterfall.setUseDepthPass(true);
       reflectionDirty = false;
     }
 
-    biome.waterfall.group.visible = false;
+    active.waterfall.group.visible = false;
     waterPool.mesh.visible = false;
-    biome.particles.group.visible = false;
-    setVegetationVisible(biome, true);
+    active.particles.group.visible = false;
+    active.foliage.mesh.visible = true;
     renderer.setRenderTarget(opaqueTarget);
     renderer.clear();
     renderer.render(scene, camera);
@@ -411,18 +356,18 @@ export function createWaterfallScene(options: {
 
     const prevAutoClear = renderer.autoClear;
     renderer.autoClear = false;
-    biome.sky.mesh.visible = false;
-    biome.cliff.group.visible = false;
-    setVegetationVisible(biome, false);
+    active.sky.mesh.visible = false;
+    active.cliff.group.visible = false;
+    active.foliage.mesh.visible = false;
     waterPool.mesh.visible = true;
-    biome.waterfall.group.visible = true;
-    biome.particles.group.visible = true;
+    active.waterfall.group.visible = true;
+    active.particles.group.visible = true;
     renderer.render(scene, camera);
     renderer.autoClear = prevAutoClear;
 
-    biome.sky.mesh.visible = true;
-    biome.cliff.group.visible = true;
-    setVegetationVisible(biome, true);
+    active.sky.mesh.visible = true;
+    active.cliff.group.visible = true;
+    active.foliage.mesh.visible = true;
 
     postProcessing.render({
       elapsedSeconds: input.elapsedSeconds,
@@ -430,76 +375,46 @@ export function createWaterfallScene(options: {
       sceneDepthTexture: opaqueTarget.depthTexture ?? fallbackTexture,
       camera,
       shadowMap: activeShadowTex,
-      shadowMatrix: biome.lighting.sunLight.shadow.matrix,
-      shadowMapSize: biome.lighting.shadowMapSize,
+      shadowMatrix: active.lighting.sunLight.shadow.matrix,
+      shadowMapSize: active.lighting.shadowMapSize,
     });
     frameIndex++;
   };
 
-  const loadBiomeAsync = async (presetId: WaterfallPresetId): Promise<WaterfallPresetConfig> => {
-    const generation = ++loadGeneration;
-    const preset = WATERFALL_PRESETS[presetId];
-    activePreset = preset;
-
-    const alreadyCached = textures.isBiomeCached(presetId);
-    const textureTotal = alreadyCached ? 1 : presetId === 'forest' ? 16 : 7;
-    const modelTotal = presetId === 'forest' ? 4 : 3;
-    const totalSteps = textureTotal + modelTotal + 2;
+  const initializeAsync = async (): Promise<void> => {
+    const totalSteps = 12;
     let completedSteps = 0;
 
     const reportProgress = (status: string, visible: boolean) => {
-      if (disposed || generation !== loadGeneration) {
+      if (disposed) {
         return;
       }
       const pct = visible ? Math.min(98, Math.max(8, (completedSteps / totalSteps) * 100)) : 100;
       onLoadProgress?.({
         visible,
-        eyebrow: preset.eyebrow,
-        title: preset.title,
+        eyebrow: config.eyebrow,
+        title: config.title,
         progress: pct,
         status,
       });
     };
 
-    reportProgress('Loading terrain & rock textures...', true);
+    reportProgress('Loading volcanic terrain textures...', true);
     await waitForAnimationFrame();
 
-    let icelandSets: IcelandTextureSets | null = null;
-    let forestSets: ForestTextureSets | null = null;
+    const icelandTextures = await textures.loadIcelandTextures((label) => {
+      completedSteps++;
+      reportProgress(`${label}...`, true);
+    });
 
-    if (presetId === 'forest') {
-      forestSets = await textures.ensureForestTextures((label) => {
-        if (!alreadyCached) {
-          completedSteps++;
-          reportProgress(`${label}...`, true);
-        }
-      });
-    } else {
-      icelandSets = await textures.ensureIcelandTextures((label) => {
-        if (!alreadyCached) {
-          completedSteps++;
-          reportProgress(`${label}...`, true);
-        }
-      });
+    if (disposed) {
+      return;
     }
 
-    if (alreadyCached) {
-      completedSteps = textureTotal;
-    }
-
-    if (disposed || generation !== loadGeneration) {
-      return preset;
-    }
-
-    if (activeBiome) {
-      disposeBiome(activeBiome);
-      activeBiome = null;
-    }
-
-    reportProgress('Building canyon geometry & foliage...', true);
+    reportProgress('Building volcanic escarpment & basalt columns...', true);
     await waitForAnimationFrame();
 
-    const sky = createIcelandicSky({ renderer, noiseTexture, preset });
+    const sky = createIcelandicSky({ renderer, noiseTexture, config });
     scene.add(sky.mesh);
     scene.environment = sky.environmentTexture;
 
@@ -507,16 +422,14 @@ export function createWaterfallScene(options: {
       scene,
       isSoftwareGpu,
       isMobileGpu,
-      preset,
+      config,
     });
     scene.add(lighting.group);
 
     const cliff = createIcelandicCliff({
       noiseTexture,
-      icelandTextures: icelandSets,
-      forestTextures: forestSets,
+      icelandTextures,
       anisotropy: maxAnisotropy,
-      presetId,
       onStaticGeometryChanged: () => {
         shadowRefreshNeeded = true;
         reflectionDirty = true;
@@ -528,40 +441,18 @@ export function createWaterfallScene(options: {
     });
     scene.add(cliff.group);
 
-    let foliage: FoliageSystem | null = null;
-    let forestVegetation: ForestVegetationSystem | null = null;
-    if (presetId === 'forest' && forestSets) {
-      forestVegetation = createForestVegetation({
-        preset,
-        forestTextures: forestSets,
-        anisotropy: maxAnisotropy,
-        isSoftwareGpu,
-        isMobileGpu,
-        fallbackShadowTexture: fallbackTexture,
-        onStaticGeometryChanged: () => {
-          shadowRefreshNeeded = true;
-          reflectionDirty = true;
-        },
-        onAssetLoaded: (label) => {
-          completedSteps++;
-          reportProgress(`${label}...`, true);
-        },
-      });
-      scene.add(forestVegetation.group);
-    } else {
-      foliage = createHighlandFoliage({
-        isSoftwareGpu,
-        isMobileGpu,
-        fallbackShadowTexture: fallbackTexture,
-      });
-      scene.add(foliage.mesh);
-    }
+    const foliage = createHighlandFoliage({
+      isSoftwareGpu,
+      isMobileGpu,
+      fallbackShadowTexture: fallbackTexture,
+    });
+    scene.add(foliage.mesh);
 
     const waterfall = createIcelandicWaterfall({
       noiseTexture,
       foamTexture: textures.waterfallFoam,
       fallbackTexture,
-      preset,
+      config,
     });
     scene.add(waterfall.group);
 
@@ -569,34 +460,29 @@ export function createWaterfallScene(options: {
       noiseTexture,
       fallbackTexture,
       reducedOverdraw: isSoftwareGpu || isMobileGpu,
-      preset,
+      config,
     });
     scene.add(particles.group);
 
-    waterPool.applyPreset(preset);
-    postProcessing.applyPreset(preset);
-
-    activeBiome = {
-      preset,
+    systems = {
       sky,
       lighting,
       cliff,
       foliage,
-      forestVegetation,
       waterfall,
       particles,
     };
 
     syncSceneTargetUniforms({ width: currentRenderWidth, height: currentRenderHeight });
     cameraController.setHeroPose({
-      position: preset.heroCameraPosition,
-      target: preset.heroCameraTarget,
+      position: config.heroCameraPosition,
+      target: config.heroCameraTarget,
       immediate: true,
     });
 
-    await Promise.all([cliff.ready, forestVegetation?.ready ?? Promise.resolve()]);
-    if (disposed || generation !== loadGeneration) {
-      return preset;
+    await cliff.ready;
+    if (disposed) {
+      return;
     }
 
     completedSteps++;
@@ -615,7 +501,6 @@ export function createWaterfallScene(options: {
 
     completedSteps = totalSteps;
     reportProgress('Ready', false);
-    return preset;
   };
 
   const handleResize = () => {
@@ -692,7 +577,7 @@ export function createWaterfallScene(options: {
     });
   };
 
-  void loadBiomeAsync('iceland').then(() => {
+  void initializeAsync().then(() => {
     if (!disposed && !isTabHidden) {
       clock.getDelta();
       animationFrameId = requestAnimationFrame(animate);
@@ -700,11 +585,6 @@ export function createWaterfallScene(options: {
   });
 
   return {
-    getPreset: () => activePreset,
-    switchWaterfall: async () => {
-      const nextId = getNextWaterfallPresetId(activePreset.id);
-      return loadBiomeAsync(nextId);
-    },
     toggleDrift: () => {
       const nextState = !cameraController.isDriftEnabled();
       cameraController.setDriftEnabled(nextState);
@@ -728,8 +608,19 @@ export function createWaterfallScene(options: {
       opaqueTarget.dispose();
       compositeTarget.dispose();
       reflectionTarget.dispose();
-      if (activeBiome) {
-        disposeBiome(activeBiome);
+      if (systems) {
+        scene.remove(systems.sky.mesh);
+        scene.remove(systems.lighting.group);
+        scene.remove(systems.cliff.group);
+        scene.remove(systems.foliage.mesh);
+        scene.remove(systems.waterfall.group);
+        scene.remove(systems.particles.group);
+        systems.sky.dispose();
+        systems.lighting.dispose();
+        systems.cliff.dispose();
+        systems.foliage.dispose();
+        systems.waterfall.dispose();
+        systems.particles.dispose();
       }
       waterPool.dispose();
       textures.dispose();

@@ -1,11 +1,6 @@
-import {
-  WaterfallPresetConfig,
-  getNextWaterfallPresetId,
-  WATERFALL_PRESETS,
-} from '../scene/waterfallPresets';
+import { ICELAND_WATERFALL_CONFIG } from '../scene/icelandConfig';
 
 export interface HudCallbacks {
-  readonly onSwitchWaterfall: () => Promise<WaterfallPresetConfig>;
   readonly onToggleSound: () => Promise<boolean>;
   readonly onToggleDrift: () => boolean;
   readonly onResetView: () => void;
@@ -59,8 +54,6 @@ export interface HudController {
 }
 
 const ICONS = {
-  switchScene:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l5-7 4 5 3-4 4 6H4z"/><circle cx="17" cy="7" r="2"/></svg>',
   soundOff:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>',
   soundOn:
@@ -99,7 +92,6 @@ function createButton(options: {
 
 export function createHud(options: {
   readonly container: HTMLElement;
-  readonly initialPreset: WaterfallPresetConfig;
   readonly callbacks: HudCallbacks;
 }): HudController {
   const { container, callbacks } = options;
@@ -113,11 +105,11 @@ export function createHud(options: {
 
   const eyebrow = document.createElement('div');
   eyebrow.className = 'hud-eyebrow';
-  eyebrow.textContent = options.initialPreset.eyebrow;
+  eyebrow.textContent = ICELAND_WATERFALL_CONFIG.eyebrow;
 
   const title = document.createElement('div');
   title.className = 'hud-title';
-  title.textContent = options.initialPreset.title;
+  title.textContent = ICELAND_WATERFALL_CONFIG.title;
 
   titleBlock.append(eyebrow, title);
   topRow.append(titleBlock);
@@ -134,22 +126,6 @@ export function createHud(options: {
 
   const toolbar = document.createElement('div');
   toolbar.className = 'hud-toolbar hud-chrome';
-
-  const getSwitchLabel = (activePreset: WaterfallPresetConfig): string => {
-    const nextPreset = WATERFALL_PRESETS[getNextWaterfallPresetId(activePreset.id)];
-    return nextPreset.buttonLabel;
-  };
-
-  const switchButton = createButton({
-    className: 'hud-button hud-button-accent',
-    ariaLabel: 'Switch waterfall scene',
-    title: 'Switch waterfall scene',
-    iconSvg: ICONS.switchScene,
-    labelText: getSwitchLabel(options.initialPreset),
-  });
-
-  const divider = document.createElement('div');
-  divider.className = 'hud-divider';
 
   const soundButton = createButton({
     className: 'hud-button',
@@ -196,15 +172,7 @@ export function createHud(options: {
   });
   restoreHudButton.hidden = true;
 
-  toolbar.append(
-    switchButton,
-    divider,
-    soundButton,
-    driftButton,
-    resetButton,
-    fullscreenButton,
-    hideHudButton,
-  );
+  toolbar.append(soundButton, driftButton, resetButton, fullscreenButton, hideHudButton);
   controlsWrap.append(toolbar, restoreHudButton);
   bottomRow.append(hint, controlsWrap);
   container.append(topRow, bottomRow);
@@ -215,26 +183,6 @@ export function createHud(options: {
     hudHidden = hidden;
     container.classList.toggle('hud-hidden', hidden);
     restoreHudButton.hidden = !hidden;
-  };
-
-  let switching = false;
-
-  const handleSwitchClick = async () => {
-    if (switching) {
-      return;
-    }
-    switching = true;
-    switchButton.disabled = true;
-    try {
-      const activePreset = await callbacks.onSwitchWaterfall();
-      eyebrow.textContent = activePreset.eyebrow;
-      title.textContent = activePreset.title;
-      document.title = `${activePreset.title} | WebGL Waterfall`;
-      switchButton.innerHTML = `${ICONS.switchScene}<span class="hud-button-label">${getSwitchLabel(activePreset)}</span>`;
-    } finally {
-      switching = false;
-      switchButton.disabled = false;
-    }
   };
 
   const handleSoundClick = async () => {
@@ -275,7 +223,6 @@ export function createHud(options: {
     }
   };
 
-  switchButton.addEventListener('click', handleSwitchClick);
   soundButton.addEventListener('click', handleSoundClick);
   driftButton.addEventListener('click', handleDriftClick);
   resetButton.addEventListener('click', handleResetClick);
@@ -286,7 +233,6 @@ export function createHud(options: {
 
   return {
     dispose: () => {
-      switchButton.removeEventListener('click', handleSwitchClick);
       soundButton.removeEventListener('click', handleSoundClick);
       driftButton.removeEventListener('click', handleDriftClick);
       resetButton.removeEventListener('click', handleResetClick);

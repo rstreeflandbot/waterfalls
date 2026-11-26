@@ -64,9 +64,6 @@ uniform float uUseDepthPass;
 uniform sampler2D uSunShadowMap;
 uniform mat4 uSunShadowMatrix;
 uniform float uShadowMapSize;
-uniform float uForestMode;
-uniform vec3 uFogCool;
-uniform vec3 uFogWarm;
 
 varying vec2 vUv;
 varying vec3 vWorldPos;
@@ -236,45 +233,22 @@ void main() {
   liquidColor = mix(liquidColor, skyReflectLinear, clamp(fresnel * 0.85, 0.0, 0.88));
   liquidColor += vec3(1.15, 0.72, 0.38) * liquidSpec;
 
-  vec3 icelandAmbientSky = vec3(0.11, 0.15, 0.20) * skyDiffuse;
-  vec3 forestAmbientSky = vec3(0.84, 0.90, 0.96) * (0.72 + 0.28 * skyDiffuse);
-  vec3 ambientSkyLinear = mix(icelandAmbientSky, forestAmbientSky, uForestMode);
-
-  vec3 directSunLinear = mix(vec3(1.25, 0.78, 0.44), vec3(1.55, 1.32, 1.02), uForestMode) * sunNdotL;
-  vec3 scatterLinear = mix(vec3(1.35, 0.74, 0.34), vec3(1.35, 1.25, 1.08), uForestMode) * phaseScatter * (0.35 + 0.65 * (1.0 - alpha));
+  vec3 ambientSkyLinear = vec3(0.11, 0.15, 0.20) * skyDiffuse;
+  vec3 directSunLinear = vec3(1.25, 0.78, 0.44) * sunNdotL;
+  vec3 scatterLinear = vec3(1.35, 0.74, 0.34) * phaseScatter * (0.35 + 0.65 * (1.0 - alpha));
 
   float selfOcclude = clamp(0.45 + heightC * 0.65, 0.38, 1.08);
-  vec3 icelandFoamAlbedo = vec3(0.84, 0.88, 0.91) * selfOcclude;
-  vec3 forestFoamAlbedo = vec3(0.96, 0.98, 1.0) * mix(0.72, 1.14, heightC);
-  vec3 foamAlbedo = mix(icelandFoamAlbedo, forestFoamAlbedo, uForestMode);
+  vec3 foamAlbedo = vec3(0.84, 0.88, 0.91) * selfOcclude;
   vec3 foamLit = foamAlbedo * (ambientSkyLinear + directSunLinear * 0.88) + scatterLinear * 0.26;
 
-  float icelandFoamMix = clamp(
+  float foamMix = clamp(
     smoothstep(0.14, 0.62, plumeDensity) * (0.28 + 0.72 * aeration) + bottomPlunge * 0.42,
     0.0,
     0.96
   );
-  float forestCoreAeration = smoothstep(0.06, 0.46, plumeDensity + 0.22 * vChuteMask);
-  float forestFoamMix = clamp(
-    forestCoreAeration * (0.68 + 0.32 * aeration) + bottomPlunge * 0.48,
-    0.0,
-    0.98
-  );
-  float foamMix = mix(icelandFoamMix, forestFoamMix, uForestMode);
 
   vec3 color = mix(liquidColor, foamLit, foamMix);
-  if (uForestMode > 0.5) {
-    vec3 toFrag = vWorldPos - cameraPosition;
-    float dist = length(toFrag);
-    vec3 rayDir = toFrag / max(dist, 0.0001);
-    float rimMist = smoothstep(22.0, 38.0, vWorldPos.y) * 0.48 + exp(-max(vWorldPos.y, 0.0) * 0.045) * 0.32;
-    float fogFactor = clamp(1.0 - exp(-pow(dist * 0.0024 * (0.6 + rimMist), 1.35)), 0.0, 0.52);
-    float sunAlign = max(dot(rayDir, sunDir), 0.0);
-    vec3 fFog = mix(uFogCool, uFogWarm, pow(sunAlign, 2.4) * 0.55);
-    color = mix(color, fFog, fogFactor);
-  } else {
-    color = applyLinearHeightFog(color, vWorldPos, cameraPosition, sunDir);
-  }
+  color = applyLinearHeightFog(color, vWorldPos, cameraPosition, sunDir);
 
   gl_FragColor = vec4(color, alpha);
 }

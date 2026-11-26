@@ -173,23 +173,6 @@ body {
   color: #fbe2c0;
 }
 
-.hud-button-accent {
-  background: rgba(145, 206, 174, 0.16);
-  color: #e4f7ec;
-}
-
-.hud-button-accent:hover {
-  background: rgba(145, 206, 174, 0.28);
-  color: #ffffff;
-}
-
-.hud-divider {
-  width: 1px;
-  height: 20px;
-  background: rgba(255, 255, 255, 0.14);
-  margin: 0 2px;
-}
-
 .hud-button-icon-only {
   width: 36px;
   padding: 0;
@@ -364,11 +347,6 @@ body {
   flex-shrink: 0;
 }
 
-.hud-button:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
 @media (max-width: 640px) {
   .hud-root {
     padding: 16px;
@@ -385,14 +363,5 @@ body {
   .hud-button {
     width: 36px;
     padding: 0;
-  }
-
-  .hud-button-accent {
-    width: auto;
-    padding: 0 12px;
-  }
-
-  .hud-button-accent .hud-button-label {
-    display: inline;
   }
 }

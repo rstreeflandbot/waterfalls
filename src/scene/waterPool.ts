@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 import { WATER_POOL_FRAGMENT_SHADER, WATER_POOL_VERTEX_SHADER } from '../shaders/waterPoolShaders';
 import { SCENE_CONFIG } from './cliffMath';
-import { WaterfallPresetConfig } from './waterfallPresets';
+import { IcelandWaterfallConfig } from './icelandConfig';
 
 export interface WaterPoolSystem {
   readonly mesh: THREE.Mesh;
   readonly update: (elapsedSeconds: number) => void;
-  readonly applyPreset: (preset: WaterfallPresetConfig) => void;
   readonly setSceneTextures: (options: {
     readonly colorTexture: THREE.Texture;
     readonly depthTexture: THREE.Texture;
@@ -28,16 +27,16 @@ export function createGlacialWaterPool(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly foamTexture: THREE.DataTexture;
   readonly fallbackTexture: THREE.Texture;
-  readonly preset: WaterfallPresetConfig;
+  readonly config: IcelandWaterfallConfig;
 }): WaterPoolSystem {
   const geometry = new THREE.PlaneGeometry(156, 176, 150, 160);
   geometry.rotateX(-Math.PI / 2);
 
-  const style = options.preset.waterStyle;
+  const style = options.config.waterStyle;
   const sunDir = new THREE.Vector3(
-    options.preset.sunDirection.x,
-    options.preset.sunDirection.y,
-    options.preset.sunDirection.z,
+    options.config.sunDirection.x,
+    options.config.sunDirection.y,
+    options.config.sunDirection.z,
   ).normalize();
 
   const uniforms = {
@@ -64,21 +63,6 @@ export function createGlacialWaterPool(options: {
     uSunShadowMap: { value: options.fallbackTexture },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uShadowMapSize: { value: 1024 },
-    uForestMode: { value: options.preset.id === 'forest' ? 1 : 0 },
-    uFogCool: {
-      value: new THREE.Vector3(
-        options.preset.fogLinearCool[0],
-        options.preset.fogLinearCool[1],
-        options.preset.fogLinearCool[2],
-      ),
-    },
-    uFogWarm: {
-      value: new THREE.Vector3(
-        options.preset.fogLinearWarm[0],
-        options.preset.fogLinearWarm[1],
-        options.preset.fogLinearWarm[2],
-      ),
-    },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -98,38 +82,6 @@ export function createGlacialWaterPool(options: {
     mesh,
     update: (elapsedSeconds: number) => {
       uniforms.uTime.value = elapsedSeconds;
-    },
-    applyPreset: (preset) => {
-      uniforms.uPlungeCenter.value.set(0, preset.waterStyle.plungeCenterZ);
-      uniforms.uSunDirection.value
-        .set(preset.sunDirection.x, preset.sunDirection.y, preset.sunDirection.z)
-        .normalize();
-      uniforms.uWaterAbsorption.value.set(
-        preset.waterStyle.absorption[0],
-        preset.waterStyle.absorption[1],
-        preset.waterStyle.absorption[2],
-      );
-      uniforms.uWaterDeepScatter.value.set(
-        preset.waterStyle.deepScatter[0],
-        preset.waterStyle.deepScatter[1],
-        preset.waterStyle.deepScatter[2],
-      );
-      uniforms.uWaterAeratedGlow.value.set(
-        preset.waterStyle.aeratedGlow[0],
-        preset.waterStyle.aeratedGlow[1],
-        preset.waterStyle.aeratedGlow[2],
-      );
-      uniforms.uForestMode.value = preset.id === 'forest' ? 1 : 0;
-      uniforms.uFogCool.value.set(
-        preset.fogLinearCool[0],
-        preset.fogLinearCool[1],
-        preset.fogLinearCool[2],
-      );
-      uniforms.uFogWarm.value.set(
-        preset.fogLinearWarm[0],
-        preset.fogLinearWarm[1],
-        preset.fogLinearWarm[2],
-      );
     },
     setSceneTextures: (sceneOpts) => {
       uniforms.tSceneColor.value = sceneOpts.colorTexture;

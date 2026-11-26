@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WaterfallPresetConfig } from './waterfallPresets';
+import { IcelandWaterfallConfig } from './icelandConfig';
 
 const SKY_VERTEX_SHADER = /* glsl */ `
 varying vec3 vWorldDirection;
@@ -89,16 +89,16 @@ export interface SkySystem {
 export function createIcelandicSky(options: {
   readonly renderer: THREE.WebGLRenderer;
   readonly noiseTexture: THREE.DataTexture;
-  readonly preset: WaterfallPresetConfig;
+  readonly config: IcelandWaterfallConfig;
 }): SkySystem {
-  const { preset } = options;
+  const { config } = options;
   const sunDir = new THREE.Vector3(
-    preset.sunDirection.x,
-    preset.sunDirection.y,
-    preset.sunDirection.z,
+    config.sunDirection.x,
+    config.sunDirection.y,
+    config.sunDirection.z,
   ).normalize();
 
-  const p = preset.skyPalette;
+  const p = config.skyPalette;
   const uniforms = {
     uTime: { value: 0 },
     uSunDirection: { value: sunDir },

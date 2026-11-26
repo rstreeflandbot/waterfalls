@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WaterfallPresetConfig } from './waterfallPresets';
+import { IcelandWaterfallConfig } from './icelandConfig';
 
 export interface LightingSystem {
   readonly group: THREE.Group;
@@ -13,20 +13,19 @@ export function createIcelandicLighting(options: {
   readonly scene: THREE.Scene;
   readonly isSoftwareGpu: boolean;
   readonly isMobileGpu: boolean;
-  readonly preset: WaterfallPresetConfig;
+  readonly config: IcelandWaterfallConfig;
 }): LightingSystem {
-  const { preset } = options;
+  const { config } = options;
   const group = new THREE.Group();
   const shadowMapSize = options.isSoftwareGpu ? 1024 : options.isMobileGpu ? 2048 : 4096;
 
-  const isForest = preset.id === 'forest';
-  options.scene.fog = new THREE.FogExp2(preset.fogColorHex, isForest ? 0.0022 : 0.0052);
+  options.scene.fog = new THREE.FogExp2(config.fogColorHex, 0.0052);
 
-  const sunLight = new THREE.DirectionalLight(preset.sunColorHex, preset.sunIntensity);
+  const sunLight = new THREE.DirectionalLight(config.sunColorHex, config.sunIntensity);
   sunLight.position.set(
-    preset.sunDirection.x * 82,
-    preset.sunDirection.y * 82 + 12,
-    preset.sunDirection.z * 82,
+    config.sunDirection.x * 82,
+    config.sunDirection.y * 82 + 12,
+    config.sunDirection.z * 82,
   );
   sunLight.target.position.set(0, 8, -11);
   sunLight.castShadow = true;
@@ -43,28 +42,19 @@ export function createIcelandicLighting(options: {
   group.add(sunLight.target);
 
   const skyHemisphere = new THREE.HemisphereLight(
-    preset.hemiSkyHex,
-    preset.hemiGroundHex,
-    preset.hemiIntensity,
+    config.hemiSkyHex,
+    config.hemiGroundHex,
+    config.hemiIntensity,
   );
   group.add(skyHemisphere);
 
-  const valleyBounceLight = new THREE.DirectionalLight(preset.bounceHex, preset.bounceIntensity);
-  valleyBounceLight.position.set(isForest ? 28 : 36, isForest ? 32 : 22, isForest ? 50 : 48);
+  const valleyBounceLight = new THREE.DirectionalLight(config.bounceHex, config.bounceIntensity);
+  valleyBounceLight.position.set(36, 22, 48);
   group.add(valleyBounceLight);
 
-  const baseMistIntensity = isForest ? 2.6 : 9.5;
-  const mistBounceLight = new THREE.PointLight(
-    isForest ? 0xdcecf5 : preset.sunColorHex,
-    baseMistIntensity,
-    isForest ? 22 : 36,
-    isForest ? 1.9 : 1.7,
-  );
-  mistBounceLight.position.set(
-    isForest ? 0.0 : -4.5,
-    isForest ? 6.5 : 6.0,
-    preset.waterStyle.plungeCenterZ + 4.5,
-  );
+  const baseMistIntensity = 9.5;
+  const mistBounceLight = new THREE.PointLight(config.sunColorHex, baseMistIntensity, 36, 1.7);
+  mistBounceLight.position.set(-4.5, 6.0, config.waterStyle.plungeCenterZ + 4.5);
   group.add(mistBounceLight);
 
   return {
@@ -72,8 +62,7 @@ export function createIcelandicLighting(options: {
     sunLight,
     shadowMapSize,
     update: (elapsedSeconds: number) => {
-      mistBounceLight.intensity =
-        baseMistIntensity + Math.sin(elapsedSeconds * 1.15) * (isForest ? 0.35 : 0.85);
+      mistBounceLight.intensity = baseMistIntensity + Math.sin(elapsedSeconds * 1.15) * 0.85;
     },
     dispose: () => {
       sunLight.shadow.map?.dispose();

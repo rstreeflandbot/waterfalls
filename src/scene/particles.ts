@@ -6,8 +6,7 @@ import {
   SPRAY_STREAK_VERTEX_SHADER,
 } from '../shaders/particleShaders';
 import { SCENE_CONFIG, createSeededRandom } from './cliffMath';
-import { FOREST_WATERFALL_CONFIG } from './forestCanyonMath';
-import { WaterfallPresetConfig } from './waterfallPresets';
+import { IcelandWaterfallConfig } from './icelandConfig';
 
 export interface ParticleSystem {
   readonly group: THREE.Group;
@@ -60,9 +59,6 @@ interface MistUniforms {
   readonly uSunShadowMap: { value: THREE.Texture };
   readonly uSunShadowMatrix: { value: THREE.Matrix4 };
   readonly uShadowMapSize: { value: number };
-  readonly uForestMode: { value: number };
-  readonly uFogCool: { value: THREE.Vector3 };
-  readonly uFogWarm: { value: THREE.Vector3 };
 }
 
 interface StreakUniforms {
@@ -73,9 +69,6 @@ interface StreakUniforms {
   readonly uSunShadowMap: { value: THREE.Texture };
   readonly uSunShadowMatrix: { value: THREE.Matrix4 };
   readonly uShadowMapSize: { value: number };
-  readonly uForestMode: { value: number };
-  readonly uFogCool: { value: THREE.Vector3 };
-  readonly uFogWarm: { value: THREE.Vector3 };
 }
 
 function createInstancedQuadGeometry(count: number): {
@@ -105,7 +98,6 @@ function createMistLayer(options: {
   readonly sunDirection: THREE.Vector3;
   readonly noiseTexture: THREE.DataTexture;
   readonly fallbackTexture: THREE.Texture;
-  readonly preset: WaterfallPresetConfig;
 }): {
   readonly mesh: THREE.Mesh;
   readonly uniforms: MistUniforms;
@@ -159,21 +151,6 @@ function createMistLayer(options: {
     uSunShadowMap: { value: options.fallbackTexture },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uShadowMapSize: { value: 1024 },
-    uForestMode: { value: options.preset.id === 'forest' ? 1 : 0 },
-    uFogCool: {
-      value: new THREE.Vector3(
-        options.preset.fogLinearCool[0],
-        options.preset.fogLinearCool[1],
-        options.preset.fogLinearCool[2],
-      ),
-    },
-    uFogWarm: {
-      value: new THREE.Vector3(
-        options.preset.fogLinearWarm[0],
-        options.preset.fogLinearWarm[1],
-        options.preset.fogLinearWarm[2],
-      ),
-    },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -205,7 +182,6 @@ function createSplashStreaks(options: {
   readonly count: number;
   readonly sunDirection: THREE.Vector3;
   readonly fallbackTexture: THREE.Texture;
-  readonly preset: WaterfallPresetConfig;
   readonly plungeCenterZ: number;
   readonly crestZ: number;
   readonly crestHeight: number;
@@ -268,21 +244,6 @@ function createSplashStreaks(options: {
     uSunShadowMap: { value: options.fallbackTexture },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uShadowMapSize: { value: 1024 },
-    uForestMode: { value: options.preset.id === 'forest' ? 1 : 0 },
-    uFogCool: {
-      value: new THREE.Vector3(
-        options.preset.fogLinearCool[0],
-        options.preset.fogLinearCool[1],
-        options.preset.fogLinearCool[2],
-      ),
-    },
-    uFogWarm: {
-      value: new THREE.Vector3(
-        options.preset.fogLinearWarm[0],
-        options.preset.fogLinearWarm[1],
-        options.preset.fogLinearWarm[2],
-      ),
-    },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -315,32 +276,30 @@ export function createWaterfallParticles(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly fallbackTexture: THREE.Texture;
   readonly reducedOverdraw: boolean;
-  readonly preset: WaterfallPresetConfig;
+  readonly config: IcelandWaterfallConfig;
 }): ParticleSystem {
   const group = new THREE.Group();
-  const isForest = options.preset.id === 'forest';
   const sunDirection = new THREE.Vector3(
-    options.preset.sunDirection.x,
-    options.preset.sunDirection.y,
-    options.preset.sunDirection.z,
+    options.config.sunDirection.x,
+    options.config.sunDirection.y,
+    options.config.sunDirection.z,
   ).normalize();
 
-  const plungeZ = options.preset.waterStyle.plungeCenterZ;
+  const plungeZ = options.config.waterStyle.plungeCenterZ;
 
   const plungeBoilMist = createMistLayer({
     sunDirection,
     noiseTexture: options.noiseTexture,
     fallbackTexture: options.fallbackTexture,
-    preset: options.preset,
     config: {
       count: options.reducedOverdraw ? 42 : 68,
       seed: 10101,
-      opacityScale: isForest ? 0.14 : 0.34,
+      opacityScale: 0.34,
       minScale: 2.8,
       maxScale: 5.5,
       minDuration: 2.8,
       maxDuration: 5.2,
-      spawnSpreadX: isForest ? 4.8 : 6.2,
+      spawnSpreadX: 6.2,
       spawnMinY: 0.1,
       spawnMaxY: 1.5,
       spawnCenterZ: plungeZ + 0.9,
@@ -358,11 +317,10 @@ export function createWaterfallParticles(options: {
     sunDirection,
     noiseTexture: options.noiseTexture,
     fallbackTexture: options.fallbackTexture,
-    preset: options.preset,
     config: {
       count: options.reducedOverdraw ? 28 : 48,
       seed: 20202,
-      opacityScale: isForest ? 0.09 : 0.16,
+      opacityScale: 0.16,
       minScale: 6.2,
       maxScale: 11.6,
       minDuration: 6.8,
@@ -382,37 +340,6 @@ export function createWaterfallParticles(options: {
   });
 
   const mistLayers = [plungeBoilMist, risingVaporPlumes];
-
-  if (isForest) {
-    const midShelfMist = createMistLayer({
-      sunDirection,
-      noiseTexture: options.noiseTexture,
-      fallbackTexture: options.fallbackTexture,
-      preset: options.preset,
-      config: {
-        count: options.reducedOverdraw ? 24 : 42,
-        seed: 30303,
-        opacityScale: 0.15,
-        minScale: 2.6,
-        maxScale: 5.4,
-        minDuration: 2.8,
-        maxDuration: 5.4,
-        spawnSpreadX: 3.4,
-        spawnMinY: FOREST_WATERFALL_CONFIG.midShelfHeight - 0.2,
-        spawnMaxY: FOREST_WATERFALL_CONFIG.midShelfHeight + 2.4,
-        spawnCenterZ: FOREST_WATERFALL_CONFIG.midShelfZ - 0.8,
-        spawnSpreadZ: 1.6,
-        driftForwardMin: 1.4,
-        driftForwardMax: 4.6,
-        driftUpMin: 1.8,
-        driftUpMax: 5.2,
-        driftSideSpread: 2.6,
-        renderOrder: 6,
-      },
-    });
-    mistLayers.push(midShelfMist);
-  }
-
   for (const layer of mistLayers) {
     group.add(layer.mesh);
   }
@@ -421,11 +348,10 @@ export function createWaterfallParticles(options: {
     count: options.reducedOverdraw ? 650 : 1200,
     sunDirection,
     fallbackTexture: options.fallbackTexture,
-    preset: options.preset,
     plungeCenterZ: plungeZ,
-    crestZ: isForest ? FOREST_WATERFALL_CONFIG.midShelfZ : SCENE_CONFIG.crestZ,
-    crestHeight: isForest ? FOREST_WATERFALL_CONFIG.upperCrestHeight : SCENE_CONFIG.crestHeight,
-    plungeWidth: isForest ? FOREST_WATERFALL_CONFIG.lowerWidthBottom : SCENE_CONFIG.plungeWidth,
+    crestZ: SCENE_CONFIG.crestZ,
+    crestHeight: SCENE_CONFIG.crestHeight,
+    plungeWidth: SCENE_CONFIG.plungeWidth,
   });
   group.add(streaks.mesh);
 

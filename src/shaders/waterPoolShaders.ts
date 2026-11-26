@@ -40,9 +40,6 @@ uniform float uCameraFar;
 uniform sampler2D uSunShadowMap;
 uniform mat4 uSunShadowMatrix;
 uniform float uShadowMapSize;
-uniform float uForestMode;
-uniform vec3 uFogCool;
-uniform vec3 uFogWarm;
 
 varying vec3 vWorldPos;
 
@@ -147,10 +144,6 @@ void main() {
 
   vec2 reflUv = clamp(vec2(screenUv.x, 1.0 - screenUv.y) + normal.xz * 0.055, vec2(0.002), vec2(0.998));
   vec3 planarReflection = texture2D(tReflection, reflUv).rgb;
-  if (uForestMode > 0.5) {
-    float gorgeThroatAtten = mix(0.28, 0.82, smoothstep(-4.0, 28.0, vWorldPos.z));
-    planarReflection *= gorgeThroatAtten;
-  }
 
   float ndotv = clamp(dot(normal, viewDir), 0.0, 1.0);
   float fresnel = 0.02 + 0.98 * pow(1.0 - ndotv, 5.0);
@@ -178,22 +171,12 @@ void main() {
 
   float foamMask = clamp(plungeFoam * 1.1 + trailingLace * 0.48 + contactFoam * 0.65, 0.0, 0.92);
 
-  vec3 foamAmbient = mix(vec3(0.11, 0.15, 0.19), vec3(0.76, 0.82, 0.88), uForestMode);
+  vec3 foamAmbient = vec3(0.11, 0.15, 0.19);
   vec3 foamDirect = vec3(0.92, 0.66, 0.44) * sunShadow * clamp(dot(normal, sunDir) * 0.6 + 0.4, 0.0, 1.0);
-  vec3 foamColor = mix(vec3(0.84, 0.88, 0.91), vec3(0.95, 0.97, 1.0), uForestMode) * (foamAmbient + foamDirect * 0.75);
+  vec3 foamColor = vec3(0.84, 0.88, 0.91) * (foamAmbient + foamDirect * 0.75);
 
   surfaceColor = mix(surfaceColor, foamColor, foamMask);
-  if (uForestMode > 0.5) {
-    vec3 toFrag = vWorldPos - cameraPosition;
-    float dist = length(toFrag);
-    vec3 rayDir = toFrag / max(dist, 0.0001);
-    float fogFactor = clamp(1.0 - exp(-pow(dist * 0.0022, 1.35)), 0.0, 0.48);
-    float sunAlign = max(dot(rayDir, sunDir), 0.0);
-    vec3 fFog = mix(uFogCool, uFogWarm, pow(sunAlign, 2.4) * 0.52);
-    surfaceColor = mix(surfaceColor, fFog, fogFactor);
-  } else {
-    surfaceColor = applyLinearHeightFog(surfaceColor, vWorldPos, cameraPosition, sunDir);
-  }
+  surfaceColor = applyLinearHeightFog(surfaceColor, vWorldPos, cameraPosition, sunDir);
 
   float shoreSoftness = smoothstep(0.0, 0.22, viewDepth);
   gl_FragColor = vec4(surfaceColor, shoreSoftness);

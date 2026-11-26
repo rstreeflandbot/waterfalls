@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { clamp, createSeededRandom } from './cliffMath';
-import { WaterfallPresetId } from './waterfallPresets';
 
 export interface PbrTextureSet {
   readonly albedoMap: THREE.Texture;
@@ -15,24 +14,11 @@ export interface IcelandTextureSets {
   readonly volcanicSand: PbrTextureSet;
 }
 
-export interface ForestTextureSets {
-  readonly forestCliff: PbrTextureSet;
-  readonly forestMossyRock: PbrTextureSet;
-  readonly forestFloor: PbrTextureSet;
-  readonly forestBark: PbrTextureSet;
-  readonly bridgeStone: PbrTextureSet;
-  readonly moss: PbrTextureSet;
-}
-
 export interface WaterfallTextureBundle {
   readonly waterfallFoam: THREE.DataTexture;
-  readonly ensureIcelandTextures: (
+  readonly loadIcelandTextures: (
     onItemLoaded?: (label: string) => void,
   ) => Promise<IcelandTextureSets>;
-  readonly ensureForestTextures: (
-    onItemLoaded?: (label: string) => void,
-  ) => Promise<ForestTextureSets>;
-  readonly isBiomeCached: (presetId: WaterfallPresetId) => boolean;
   readonly dispose: () => void;
 }
 
@@ -511,28 +497,9 @@ export function createWaterfallTextureBundle(options: {
   });
 
   const ownedSets: PbrTextureSet[] = [];
-  let mossPromise: Promise<PbrTextureSet> | null = null;
   let icelandPromise: Promise<IcelandTextureSets> | null = null;
-  let forestPromise: Promise<ForestTextureSets> | null = null;
-  let icelandReady = false;
-  let forestReady = false;
 
-  const ensureMoss = (onItemLoaded?: (label: string) => void): Promise<PbrTextureSet> => {
-    if (!mossPromise) {
-      const mossEntry = createMossPbrSet({
-        loader,
-        albedoUrl: '/textures/moss_albedo.jpg',
-        derivedSize: options.isSoftwareGpu || options.isMobileGpu ? 256 : 512,
-        anisotropy,
-        onItemLoaded,
-      });
-      ownedSets.push(mossEntry.set);
-      mossPromise = mossEntry.ready.then(() => mossEntry.set);
-    }
-    return mossPromise;
-  };
-
-  const ensureIcelandTextures = (
+  const loadIcelandTextures = (
     onItemLoaded?: (label: string) => void,
   ): Promise<IcelandTextureSets> => {
     if (!icelandPromise) {
@@ -554,108 +521,29 @@ export function createWaterfallTextureBundle(options: {
         label: 'Loading riverbed stone textures',
         onItemLoaded,
       });
-      ownedSets.push(basaltEntry.set, sandEntry.set);
-
-      icelandPromise = Promise.all([
-        basaltEntry.ready,
-        sandEntry.ready,
-        ensureMoss(onItemLoaded),
-      ]).then(([, , moss]) => {
-        icelandReady = true;
-        return {
-          basalt: basaltEntry.set,
-          moss,
-          volcanicSand: sandEntry.set,
-        };
+      const mossEntry = createMossPbrSet({
+        loader,
+        albedoUrl: '/textures/moss_albedo.jpg',
+        derivedSize: options.isSoftwareGpu || options.isMobileGpu ? 256 : 512,
+        anisotropy,
+        onItemLoaded,
       });
+      ownedSets.push(basaltEntry.set, sandEntry.set, mossEntry.set);
+
+      icelandPromise = Promise.all([basaltEntry.ready, sandEntry.ready, mossEntry.ready]).then(
+        () => ({
+          basalt: basaltEntry.set,
+          moss: mossEntry.set,
+          volcanicSand: sandEntry.set,
+        }),
+      );
     }
     return icelandPromise;
   };
 
-  const ensureForestTextures = (
-    onItemLoaded?: (label: string) => void,
-  ): Promise<ForestTextureSets> => {
-    if (!forestPromise) {
-      const cliffEntry = createDirectScannedPbrSet({
-        loader,
-        albedoUrl: '/textures/forest_cliff_albedo.jpg',
-        normalUrl: '/textures/forest_cliff_normal.jpg',
-        rmaUrl: '/textures/forest_cliff_rma.jpg',
-        anisotropy,
-        label: 'Loading gorge cliff textures',
-        onItemLoaded,
-      });
-      const mossyRockEntry = createDirectScannedPbrSet({
-        loader,
-        albedoUrl: '/textures/forest_mossy_rock_albedo.jpg',
-        normalUrl: '/textures/forest_mossy_rock_normal.jpg',
-        rmaUrl: '/textures/forest_mossy_rock_rma.jpg',
-        anisotropy,
-        label: 'Loading mossy canyon rock textures',
-        onItemLoaded,
-      });
-      const floorEntry = createDirectScannedPbrSet({
-        loader,
-        albedoUrl: '/textures/forest_floor_albedo.jpg',
-        normalUrl: '/textures/forest_floor_normal.jpg',
-        rmaUrl: '/textures/forest_floor_rma.jpg',
-        anisotropy,
-        label: 'Loading autumn forest floor textures',
-        onItemLoaded,
-      });
-      const barkEntry = createDirectScannedPbrSet({
-        loader,
-        albedoUrl: '/textures/forest_bark_albedo.jpg',
-        normalUrl: '/textures/forest_bark_normal.jpg',
-        rmaUrl: '/textures/forest_bark_rma.jpg',
-        anisotropy,
-        label: 'Loading tree bark textures',
-        onItemLoaded,
-      });
-      const bridgeEntry = createDirectScannedPbrSet({
-        loader,
-        albedoUrl: '/textures/bridge_stone_albedo.jpg',
-        normalUrl: '/textures/bridge_stone_normal.jpg',
-        rmaUrl: '/textures/bridge_stone_rma.jpg',
-        anisotropy,
-        label: 'Loading bridge masonry textures',
-        onItemLoaded,
-      });
-      ownedSets.push(
-        cliffEntry.set,
-        mossyRockEntry.set,
-        floorEntry.set,
-        barkEntry.set,
-        bridgeEntry.set,
-      );
-
-      forestPromise = Promise.all([
-        cliffEntry.ready,
-        mossyRockEntry.ready,
-        floorEntry.ready,
-        barkEntry.ready,
-        bridgeEntry.ready,
-        ensureMoss(onItemLoaded),
-      ]).then(([, , , , , moss]) => {
-        forestReady = true;
-        return {
-          forestCliff: cliffEntry.set,
-          forestMossyRock: mossyRockEntry.set,
-          forestFloor: floorEntry.set,
-          forestBark: barkEntry.set,
-          bridgeStone: bridgeEntry.set,
-          moss,
-        };
-      });
-    }
-    return forestPromise;
-  };
-
   return {
     waterfallFoam,
-    ensureIcelandTextures,
-    ensureForestTextures,
-    isBiomeCached: (presetId) => (presetId === 'forest' ? forestReady : icelandReady),
+    loadIcelandTextures,
     dispose: () => {
       for (const set of ownedSets) {
         set.dispose();

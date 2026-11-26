@@ -4,99 +4,7 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SHARED_ATMOS_AND_SHADOW_GLSL } from '../shaders/sharedShaderGlsl';
-import { WaterfallPresetConfig } from './waterfallPresets';
-
-const GTAO_CONTACT_SHADER = {
-  uniforms: {
-    tDiffuse: { value: null },
-    tSceneDepth: { value: null },
-    uInvProjection: { value: new THREE.Matrix4() },
-    uResolution: { value: new THREE.Vector2(1, 1) },
-    uStrength: { value: 0.0 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform sampler2D tSceneDepth;
-    uniform mat4 uInvProjection;
-    uniform vec2 uResolution;
-    uniform float uStrength;
-
-    varying vec2 vUv;
-
-    vec3 reconstructViewPos(vec2 uv, float depth) {
-      vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-      vec4 view = uInvProjection * clip;
-      return view.xyz / max(view.w, 0.0001);
-    }
-
-    float ign(vec2 p) {
-      return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-    }
-
-    void main() {
-      vec4 baseColor = texture2D(tDiffuse, vUv);
-      if (uStrength <= 0.001) {
-        gl_FragColor = baseColor;
-        return;
-      }
-
-      float rawDepth = texture2D(tSceneDepth, vUv).r;
-      if (rawDepth >= 0.9995) {
-        gl_FragColor = baseColor;
-        return;
-      }
-
-      vec3 centerPos = reconstructViewPos(vUv, rawDepth);
-      float viewDist = -centerPos.z;
-      if (viewDist > 95.0) {
-        gl_FragColor = baseColor;
-        return;
-      }
-
-      vec2 texel = 1.0 / max(uResolution, vec2(1.0));
-      vec3 posR = reconstructViewPos(vUv + vec2(texel.x, 0.0), texture2D(tSceneDepth, vUv + vec2(texel.x, 0.0)).r);
-      vec3 posU = reconstructViewPos(vUv + vec2(0.0, texel.y), texture2D(tSceneDepth, vUv + vec2(0.0, texel.y)).r);
-      vec3 normal = normalize(cross(posR - centerPos, posU - centerPos));
-
-      float worldRadius = 1.65;
-      float screenRadius = clamp((worldRadius / max(viewDist, 1.0)) * 0.72, 0.004, 0.036);
-      float angleOffset = ign(gl_FragCoord.xy) * 6.2831853;
-
-      float occ = 0.0;
-      const int TAPS = 8;
-      for (int i = 0; i < TAPS; i++) {
-        float fi = float(i);
-        float a = angleOffset + fi * 0.78539816;
-        float r = screenRadius * (0.32 + 0.68 * fract(fi * 0.6180339 + 0.25));
-        vec2 sampleUv = clamp(vUv + vec2(cos(a), sin(a)) * r, vec2(0.002), vec2(0.998));
-        float sampleDepth = texture2D(tSceneDepth, sampleUv).r;
-        if (sampleDepth >= 0.9995) {
-          continue;
-        }
-        vec3 samplePos = reconstructViewPos(sampleUv, sampleDepth);
-        vec3 delta = samplePos - centerPos;
-        float dist = length(delta);
-        if (dist < 0.02 || dist > worldRadius * 2.2) {
-          continue;
-        }
-        float horizon = max(dot(normal, delta / dist) - 0.12, 0.0);
-        float falloff = 1.0 - smoothstep(worldRadius * 0.35, worldRadius * 2.2, dist);
-        occ += horizon * falloff;
-      }
-
-      float distFade = 1.0 - smoothstep(45.0, 92.0, viewDist);
-      float ao = clamp(1.0 - (occ / float(TAPS)) * 1.15 * uStrength * distFade, 0.64, 1.0);
-      gl_FragColor = vec4(baseColor.rgb * ao, baseColor.a);
-    }
-  `,
-};
+import { IcelandWaterfallConfig } from './icelandConfig';
 
 const VOLUMETRIC_GODRAYS_SHADER = {
   uniforms: {
@@ -112,8 +20,7 @@ const VOLUMETRIC_GODRAYS_SHADER = {
     uTime: { value: 0 },
     uRayStrength: { value: 0.34 },
     uRayTint: { value: new THREE.Vector3(1.25, 0.72, 0.34) },
-    uPlungeCenterZ: { value: -10.3 },
-    uForestMode: { value: 0.0 },
+    uPlungeCenterZ: { value: -9.7 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -136,7 +43,6 @@ const VOLUMETRIC_GODRAYS_SHADER = {
     uniform float uRayStrength;
     uniform vec3 uRayTint;
     uniform float uPlungeCenterZ;
-    uniform float uForestMode;
 
     varying vec2 vUv;
 
@@ -170,15 +76,11 @@ const VOLUMETRIC_GODRAYS_SHADER = {
       vec3 sunDir = normalize(uSunDirection);
 
       float cosTheta = dot(rayDir, sunDir);
-      float g = mix(0.72, 0.48, uForestMode);
+      float g = 0.72;
       float phase = (1.0 - g * g) / (4.0 * 3.14159 * pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5));
-      float phaseWeight = mix(
-        clamp(phase * 0.45, 0.0, 2.5),
-        clamp(phase * 0.65 + 0.18, 0.14, 2.2),
-        uForestMode
-      );
+      float phaseWeight = clamp(phase * 0.45, 0.0, 2.5);
 
-      if (uForestMode < 0.5 && phaseWeight < 0.04) {
+      if (phaseWeight < 0.04) {
         gl_FragColor = baseColor;
         return;
       }
@@ -203,12 +105,8 @@ const VOLUMETRIC_GODRAYS_SHADER = {
         }
 
         float plungeDist = length(samplePos.xz - vec2(0.0, uPlungeCenterZ));
-        float icelandMist = exp(-max(samplePos.y, 0.0) * 0.068) * (0.35 + 1.2 * exp(-plungeDist * 0.055));
-        float forestUpperMist =
-          smoothstep(8.0, 34.0, samplePos.y) * (0.35 + 0.85 * exp(-plungeDist * 0.042)) +
-          exp(-max(samplePos.y - 12.0, 0.0) * 0.14) * 0.32 * exp(-plungeDist * 0.075);
-        float valleyMist = mix(icelandMist, forestUpperMist, uForestMode);
-        scatterAccum += inLight * valleyMist * stepLen * mix(0.016, 0.011, uForestMode);
+        float valleyMist = exp(-max(samplePos.y, 0.0) * 0.068) * (0.35 + 1.2 * exp(-plungeDist * 0.055));
+        scatterAccum += inLight * valleyMist * stepLen * 0.016;
       }
 
       vec3 sunShaftColor = uRayTint * scatterAccum * phaseWeight * uRayStrength;
@@ -229,17 +127,14 @@ const HALF_RES_MOBILE_FX_FRAGMENT = /* glsl */ `
 uniform sampler2D tSceneDepth;
 uniform mat4 uInvProjection;
 uniform mat4 uInvView;
-uniform vec2 uHalfResolution;
 uniform vec3 uCameraPos;
 uniform vec3 uSunDirection;
 uniform sampler2D uSunShadowMap;
 uniform mat4 uSunShadowMatrix;
 uniform float uTime;
-uniform float uAoStrength;
 uniform float uRayStrength;
 uniform vec3 uRayTint;
 uniform float uPlungeCenterZ;
-uniform float uForestMode;
 
 varying vec2 vUv;
 
@@ -256,48 +151,10 @@ float ign(vec2 p) {
 }
 
 void main() {
-  float rawDepth = texture2D(tSceneDepth, vUv).r;
-  vec3 viewPos = reconstructViewPos(vUv, rawDepth);
-  float ao = 1.0;
-
-  if (uAoStrength > 0.001 && rawDepth < 0.9995 && -viewPos.z < 95.0) {
-    vec2 texel = 1.0 / max(uHalfResolution, vec2(1.0));
-    vec3 posR = reconstructViewPos(vUv + vec2(texel.x, 0.0), texture2D(tSceneDepth, vUv + vec2(texel.x, 0.0)).r);
-    vec3 posU = reconstructViewPos(vUv + vec2(0.0, texel.y), texture2D(tSceneDepth, vUv + vec2(0.0, texel.y)).r);
-    vec3 normal = normalize(cross(posR - viewPos, posU - viewPos));
-
-    float worldRadius = 1.65;
-    float screenRadius = clamp((worldRadius / max(-viewPos.z, 1.0)) * 0.72, 0.005, 0.038);
-    float angleOffset = ign(gl_FragCoord.xy) * 6.2831853;
-
-    float occ = 0.0;
-    const int TAPS = 6;
-    for (int i = 0; i < TAPS; i++) {
-      float fi = float(i);
-      float a = angleOffset + fi * 1.0471975;
-      float r = screenRadius * (0.34 + 0.66 * fract(fi * 0.6180339 + 0.2));
-      vec2 sampleUv = clamp(vUv + vec2(cos(a), sin(a)) * r, vec2(0.002), vec2(0.998));
-      float sampleDepth = texture2D(tSceneDepth, sampleUv).r;
-      if (sampleDepth >= 0.9995) {
-        continue;
-      }
-      vec3 samplePos = reconstructViewPos(sampleUv, sampleDepth);
-      vec3 delta = samplePos - viewPos;
-      float dist = length(delta);
-      if (dist < 0.02 || dist > worldRadius * 2.2) {
-        continue;
-      }
-      float horizon = max(dot(normal, delta / dist) - 0.12, 0.0);
-      float falloff = 1.0 - smoothstep(worldRadius * 0.35, worldRadius * 2.2, dist);
-      occ += horizon * falloff;
-    }
-
-    float distFade = 1.0 - smoothstep(45.0, 92.0, -viewPos.z);
-    ao = clamp(1.0 - (occ / float(TAPS)) * 1.15 * uAoStrength * distFade, 0.64, 1.0);
-  }
-
   vec3 sunShaftColor = vec3(0.0);
   if (uRayStrength > 0.001) {
+    float rawDepth = texture2D(tSceneDepth, vUv).r;
+    vec3 viewPos = reconstructViewPos(vUv, rawDepth);
     vec3 worldPos = (uInvView * vec4(viewPos, 1.0)).xyz;
     vec3 rayVec = worldPos - uCameraPos;
     float maxDist = min(length(rayVec), 68.0);
@@ -305,15 +162,11 @@ void main() {
     vec3 sunDir = normalize(uSunDirection);
 
     float cosTheta = dot(rayDir, sunDir);
-    float g = mix(0.72, 0.48, uForestMode);
+    float g = 0.72;
     float phase = (1.0 - g * g) / (4.0 * 3.14159 * pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5));
-    float phaseWeight = mix(
-      clamp(phase * 0.45, 0.0, 2.5),
-      clamp(phase * 0.65 + 0.18, 0.14, 2.2),
-      uForestMode
-    );
+    float phaseWeight = clamp(phase * 0.45, 0.0, 2.5);
 
-    if (uForestMode > 0.5 || phaseWeight >= 0.04) {
+    if (phaseWeight >= 0.04) {
       float jitter = ign(gl_FragCoord.xy + fract(uTime * 11.3) * 17.0);
       const int STEPS = 10;
       float stepLen = maxDist / float(STEPS);
@@ -334,19 +187,15 @@ void main() {
         }
 
         float plungeDist = length(samplePos.xz - vec2(0.0, uPlungeCenterZ));
-        float icelandMist = exp(-max(samplePos.y, 0.0) * 0.068) * (0.35 + 1.2 * exp(-plungeDist * 0.055));
-        float forestUpperMist =
-          smoothstep(8.0, 34.0, samplePos.y) * (0.35 + 0.85 * exp(-plungeDist * 0.042)) +
-          exp(-max(samplePos.y - 12.0, 0.0) * 0.14) * 0.32 * exp(-plungeDist * 0.075);
-        float valleyMist = mix(icelandMist, forestUpperMist, uForestMode);
-        scatterAccum += inLight * valleyMist * stepLen * mix(0.016, 0.011, uForestMode);
+        float valleyMist = exp(-max(samplePos.y, 0.0) * 0.068) * (0.35 + 1.2 * exp(-plungeDist * 0.055));
+        scatterAccum += inLight * valleyMist * stepLen * 0.016;
       }
 
       sunShaftColor = uRayTint * scatterAccum * phaseWeight * uRayStrength;
     }
   }
 
-  gl_FragColor = vec4(sunShaftColor, ao);
+  gl_FragColor = vec4(sunShaftColor, 1.0);
 }
 `;
 
@@ -369,7 +218,7 @@ const HALF_RES_FX_COMPOSITE_SHADER = {
     void main() {
       vec4 base = texture2D(tDiffuse, vUv);
       vec4 fx = texture2D(tHalfResFx, vUv);
-      gl_FragColor = vec4(base.rgb * fx.a + fx.rgb, base.a);
+      gl_FragColor = vec4(base.rgb + fx.rgb, base.a);
     }
   `,
 };
@@ -379,7 +228,6 @@ const AGX_GRADE_SHADER = {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uExposure: { value: 1.12 },
-    uForestMode: { value: 0.0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -393,7 +241,6 @@ const AGX_GRADE_SHADER = {
     uniform sampler2D tDiffuse;
     uniform float uTime;
     uniform float uExposure;
-    uniform float uForestMode;
 
     varying vec2 vUv;
 
@@ -452,10 +299,6 @@ const AGX_GRADE_SHADER = {
       vec3 color = agxToneMapping(texel.rgb * uExposure);
 
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      if (uForestMode > 0.5) {
-        color = mix(vec3(luma), color, 1.2);
-      }
-
       vec3 coolShadows = vec3(0.96, 0.99, 1.04);
       vec3 warmHighlights = vec3(1.04, 0.99, 0.95);
       color *= mix(coolShadows, warmHighlights, smoothstep(0.18, 0.85, luma));
@@ -493,7 +336,6 @@ const SOURCE_TEXTURE_COPY_SHADER = {
 };
 
 export interface PostProcessingSystem {
-  readonly applyPreset: (preset: WaterfallPresetConfig) => void;
   readonly render: (input: {
     readonly elapsedSeconds: number;
     readonly sourceColorTexture: THREE.Texture;
@@ -513,7 +355,7 @@ export function createPostProcessing(options: {
   readonly height: number;
   readonly isSoftwareGpu: boolean;
   readonly isMobileGpu: boolean;
-  readonly preset: WaterfallPresetConfig;
+  readonly config: IcelandWaterfallConfig;
 }): PostProcessingSystem {
   const pixelRatio = options.renderer.getPixelRatio();
   const renderW = Math.max(1, Math.floor(options.width * pixelRatio));
@@ -541,41 +383,48 @@ export function createPostProcessing(options: {
       })
     : null;
 
+  const sunDirectionVec = new THREE.Vector3(
+    options.config.sunDirection.x,
+    options.config.sunDirection.y,
+    options.config.sunDirection.z,
+  ).normalize();
+  const rayTintVec = new THREE.Vector3(
+    options.config.godRayTint[0],
+    options.config.godRayTint[1],
+    options.config.godRayTint[2],
+  );
+  const rayStrength = options.isSoftwareGpu ? 0.0 : options.config.godRayStrength;
+
   const halfResFxScene = new THREE.Scene();
   const halfResFxCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const halfResFxQuadGeo = new THREE.PlaneGeometry(2, 2);
+
   interface HalfResFxUniforms {
     readonly tSceneDepth: { value: THREE.Texture | null };
     readonly uInvProjection: { value: THREE.Matrix4 };
     readonly uInvView: { value: THREE.Matrix4 };
-    readonly uHalfResolution: { value: THREE.Vector2 };
     readonly uCameraPos: { value: THREE.Vector3 };
     readonly uSunDirection: { value: THREE.Vector3 };
     readonly uSunShadowMap: { value: THREE.Texture | null };
     readonly uSunShadowMatrix: { value: THREE.Matrix4 };
     readonly uTime: { value: number };
-    readonly uAoStrength: { value: number };
     readonly uRayStrength: { value: number };
     readonly uRayTint: { value: THREE.Vector3 };
     readonly uPlungeCenterZ: { value: number };
-    readonly uForestMode: { value: number };
   }
 
   const halfResFxUniforms: HalfResFxUniforms = {
     tSceneDepth: { value: null },
     uInvProjection: { value: new THREE.Matrix4() },
     uInvView: { value: new THREE.Matrix4() },
-    uHalfResolution: { value: new THREE.Vector2(halfW, halfH) },
     uCameraPos: { value: new THREE.Vector3() },
-    uSunDirection: { value: new THREE.Vector3() },
+    uSunDirection: { value: sunDirectionVec.clone() },
     uSunShadowMap: { value: null },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uTime: { value: 0 },
-    uAoStrength: { value: 0.0 },
-    uRayStrength: { value: 0.34 },
-    uRayTint: { value: new THREE.Vector3(1.25, 0.72, 0.34) },
-    uPlungeCenterZ: { value: -10.3 },
-    uForestMode: { value: 0.0 },
+    uRayStrength: { value: rayStrength },
+    uRayTint: { value: rayTintVec.clone() },
+    uPlungeCenterZ: { value: options.config.waterStyle.plungeCenterZ },
   };
   const halfResFxMat = new THREE.ShaderMaterial({
     vertexShader: HALF_RES_MOBILE_FX_VERTEX,
@@ -586,20 +435,27 @@ export function createPostProcessing(options: {
   });
   halfResFxScene.add(new THREE.Mesh(halfResFxQuadGeo, halfResFxMat));
 
-  const gtaoPass = new ShaderPass(GTAO_CONTACT_SHADER);
-  if (gtaoPass.uniforms.uResolution) {
-    gtaoPass.uniforms.uResolution.value = new THREE.Vector2(renderW, renderH);
-  }
   const godRaysPass = new ShaderPass(VOLUMETRIC_GODRAYS_SHADER);
-  const halfResCompositePass = new ShaderPass(HALF_RES_FX_COMPOSITE_SHADER);
+  if (godRaysPass.uniforms.uSunDirection) {
+    godRaysPass.uniforms.uSunDirection.value = sunDirectionVec;
+  }
+  if (godRaysPass.uniforms.uRayStrength) {
+    godRaysPass.uniforms.uRayStrength.value = rayStrength;
+  }
+  if (godRaysPass.uniforms.uRayTint) {
+    godRaysPass.uniforms.uRayTint.value = rayTintVec;
+  }
+  if (godRaysPass.uniforms.uPlungeCenterZ) {
+    godRaysPass.uniforms.uPlungeCenterZ.value = options.config.waterStyle.plungeCenterZ;
+  }
 
+  const halfResCompositePass = new ShaderPass(HALF_RES_FX_COMPOSITE_SHADER);
   if (useHalfResMobileFx && halfResFxTarget) {
     if (halfResCompositePass.uniforms.tHalfResFx) {
       halfResCompositePass.uniforms.tHalfResFx.value = halfResFxTarget.texture;
     }
     composer.addPass(halfResCompositePass);
   } else {
-    composer.addPass(gtaoPass);
     composer.addPass(godRaysPass);
   }
 
@@ -615,6 +471,9 @@ export function createPostProcessing(options: {
   composer.addPass(bloomPass);
 
   const gradePass = new ShaderPass(AGX_GRADE_SHADER);
+  if (gradePass.uniforms.uExposure) {
+    gradePass.uniforms.uExposure.value = options.config.exposure;
+  }
   composer.addPass(gradePass);
 
   const smaaPass = new SMAAPass(renderW, renderH);
@@ -623,59 +482,8 @@ export function createPostProcessing(options: {
 
   const invProjection = new THREE.Matrix4();
   const invView = new THREE.Matrix4();
-  const sunDirectionVec = new THREE.Vector3();
-  const rayTintVec = new THREE.Vector3();
-
-  const applyPreset = (preset: WaterfallPresetConfig) => {
-    const isForest = preset.id === 'forest';
-    sunDirectionVec
-      .set(preset.sunDirection.x, preset.sunDirection.y, preset.sunDirection.z)
-      .normalize();
-    rayTintVec.set(preset.godRayTint[0], preset.godRayTint[1], preset.godRayTint[2]);
-
-    const aoStrength = !options.isSoftwareGpu && isForest ? 0.56 : 0.0;
-    const rayStrength = options.isSoftwareGpu ? 0.0 : preset.godRayStrength;
-
-    if (useHalfResMobileFx) {
-      halfResFxUniforms.uSunDirection.value.copy(sunDirectionVec);
-      halfResFxUniforms.uRayTint.value.copy(rayTintVec);
-      halfResFxUniforms.uAoStrength.value = aoStrength;
-      halfResFxUniforms.uRayStrength.value = rayStrength;
-      halfResFxUniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
-      halfResFxUniforms.uForestMode.value = isForest ? 1.0 : 0.0;
-    } else {
-      if (gtaoPass.uniforms.uStrength) {
-        gtaoPass.uniforms.uStrength.value = aoStrength;
-      }
-      if (godRaysPass.uniforms.uSunDirection) {
-        godRaysPass.uniforms.uSunDirection.value = sunDirectionVec;
-      }
-      if (godRaysPass.uniforms.uRayStrength) {
-        godRaysPass.uniforms.uRayStrength.value = rayStrength;
-      }
-      if (godRaysPass.uniforms.uRayTint) {
-        godRaysPass.uniforms.uRayTint.value = rayTintVec;
-      }
-      if (godRaysPass.uniforms.uPlungeCenterZ) {
-        godRaysPass.uniforms.uPlungeCenterZ.value = preset.waterStyle.plungeCenterZ;
-      }
-      if (godRaysPass.uniforms.uForestMode) {
-        godRaysPass.uniforms.uForestMode.value = isForest ? 1.0 : 0.0;
-      }
-    }
-
-    if (gradePass.uniforms.uExposure) {
-      gradePass.uniforms.uExposure.value = preset.exposure;
-    }
-    if (gradePass.uniforms.uForestMode) {
-      gradePass.uniforms.uForestMode.value = isForest ? 1.0 : 0.0;
-    }
-  };
-
-  applyPreset(options.preset);
 
   return {
-    applyPreset,
     render: (input) => {
       if (sourcePass.uniforms.tSource) {
         sourcePass.uniforms.tSource.value = input.sourceColorTexture;
@@ -696,12 +504,6 @@ export function createPostProcessing(options: {
         options.renderer.setRenderTarget(halfResFxTarget);
         options.renderer.render(halfResFxScene, halfResFxCamera);
       } else {
-        if (gtaoPass.uniforms.tSceneDepth) {
-          gtaoPass.uniforms.tSceneDepth.value = input.sceneDepthTexture;
-        }
-        if (gtaoPass.uniforms.uInvProjection) {
-          gtaoPass.uniforms.uInvProjection.value = invProjection;
-        }
         if (godRaysPass.uniforms.tSceneDepth) {
           godRaysPass.uniforms.tSceneDepth.value = input.sceneDepthTexture;
         }
@@ -740,13 +542,10 @@ export function createPostProcessing(options: {
       const nextRenderH = Math.max(1, Math.floor(size.height * pr));
       composer.setSize(size.width, size.height);
       if (halfResFxTarget) {
-        const nextHalfW = Math.max(1, Math.floor(nextRenderW * 0.5));
-        const nextHalfH = Math.max(1, Math.floor(nextRenderH * 0.5));
-        halfResFxTarget.setSize(nextHalfW, nextHalfH);
-        halfResFxUniforms.uHalfResolution.value.set(nextHalfW, nextHalfH);
-      }
-      if (gtaoPass.uniforms.uResolution?.value instanceof THREE.Vector2) {
-        gtaoPass.uniforms.uResolution.value.set(nextRenderW, nextRenderH);
+        halfResFxTarget.setSize(
+          Math.max(1, Math.floor(nextRenderW * 0.5)),
+          Math.max(1, Math.floor(nextRenderH * 0.5)),
+        );
       }
       bloomPass.resolution.set(
         Math.max(1, Math.floor(size.width * 0.5)),
