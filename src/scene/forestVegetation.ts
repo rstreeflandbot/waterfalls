@@ -81,8 +81,8 @@ ${SHARED_ATMOS_AND_SHADOW_GLSL}
 
 void main() {
   vec4 texSample = texture2D(uLeafTex, vUv);
-  float mipBoost = 1.0 + clamp(length(fwidth(vUv)) * 18.0, 0.0, 0.68);
-  if (texSample.a * mipBoost < 0.30) {
+  float mipBoost = 1.0 + clamp(length(fwidth(vUv)) * 22.0, 0.0, 0.95);
+  if (texSample.a * mipBoost < 0.24) {
     discard;
   }
 
@@ -102,20 +102,20 @@ void main() {
   float slotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vWorldPos.x));
   float depthInGorge = 1.0 - smoothstep(1.5, 23.0, vWorldPos.y);
   float backWallPocket = 1.0 - smoothstep(-19.0, 8.0, vWorldPos.z);
-  float gorgeSkyAo = mix(1.0, 0.22, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
+  float gorgeSkyAo = mix(1.0, 0.56, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
 
   vec3 linearTex = pow(texSample.rgb, vec3(2.2));
-  vec3 crownShade = mix(vec3(0.18, 0.14, 0.12), vec3(1.18, 1.12, 1.02), vCardShade);
+  vec3 crownShade = mix(vec3(0.32, 0.26, 0.22), vec3(1.18, 1.12, 1.02), vCardShade);
   vec3 albedo = linearTex * vCanopyColor * crownShade;
 
   float wrapNdotL = clamp((dot(n, sunDir) + 0.42) / 1.42, 0.0, 1.0);
-  float lit = mix(0.14, 1.0, shadow) * wrapNdotL;
+  float lit = mix(0.24, 1.0, shadow) * wrapNdotL;
 
   float backLight = pow(max(dot(-viewDir, sunDir), 0.0), 2.3);
   float rimGlow = pow(1.0 - abs(dot(n, viewDir)), 2.2) * 0.42;
-  float translucency = (backLight * 1.15 + rimGlow * 0.45) * mix(0.24, 1.0, shadow) * (0.28 + 0.72 * vCardShade);
+  float translucency = (backLight * 1.15 + rimGlow * 0.45) * mix(0.28, 1.0, shadow) * (0.28 + 0.72 * vCardShade);
 
-  vec3 skyAmbient = mix(vec3(0.05, 0.065, 0.07), vec3(0.24, 0.28, 0.31), vCardShade) * gorgeSkyAo;
+  vec3 skyAmbient = mix(vec3(0.11, 0.13, 0.14), vec3(0.34, 0.38, 0.40), vCardShade) * gorgeSkyAo;
   vec3 directLight = vec3(2.4, 1.85, 1.05) * lit;
   vec3 sssColor = albedo * vec3(2.35, 1.42, 0.32) * translucency * uSubsurfaceStrength;
 
@@ -213,16 +213,16 @@ void main() {
   float slotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vWorldPos.x));
   float depthInGorge = 1.0 - smoothstep(1.5, 23.0, vWorldPos.y);
   float backWallPocket = 1.0 - smoothstep(-19.0, 8.0, vWorldPos.z);
-  float gorgeSkyAo = mix(1.0, 0.18, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
+  float gorgeSkyAo = mix(1.0, 0.54, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
 
-  vec3 rootColor = vec3(0.008, 0.024, 0.006) * vBladeTint;
-  vec3 tipColor = vec3(0.085, 0.165, 0.028) * vBladeTint;
+  vec3 rootColor = vec3(0.022, 0.052, 0.014) * vBladeTint;
+  vec3 tipColor = vec3(0.12, 0.22, 0.042) * vBladeTint;
   vec3 albedo = mix(rootColor, tipColor, smoothstep(0.0, 1.0, vHeightT));
 
   float sunFacing = clamp((dot(litNormal, sunDir) + 0.32) / 1.32, 0.0, 1.0) * shadow;
   float sss = pow(max(dot(-viewDir, sunDir), 0.0), 2.5) * shadow * vHeightT;
 
-  vec3 skyAmbient = vec3(0.14, 0.18, 0.16) * (0.35 + 0.65 * vHeightT) * gorgeSkyAo;
+  vec3 skyAmbient = vec3(0.24, 0.30, 0.26) * (0.42 + 0.58 * vHeightT) * gorgeSkyAo;
   vec3 directSun = vec3(2.2, 1.72, 0.98) * sunFacing;
   vec3 translucency = albedo * vec3(1.8, 1.55, 0.35) * sss * 1.1;
 
@@ -1012,8 +1012,8 @@ function createDouglasFirArchetype(seed: number): TreeArchetype {
         y - 0.015 * (1 - ratio),
         Math.sin(yaw) * dist,
       );
-      const width = tierRadius * (1.1 + rand() * 0.28);
-      const height = 0.068 + (1 - ratio) * 0.065;
+      const width = tierRadius * (1.35 + rand() * 0.32);
+      const height = 0.088 + (1 - ratio) * 0.075;
       appendVolumetricFoliageCard({
         positions: fPos,
         normals: fNorm,
@@ -1294,7 +1294,7 @@ function loadPhotogrammetryFoliageSet(options: {
               float pSlotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vPlantWPos.x));
               float pDepthInGorge = 1.0 - smoothstep(1.5, 23.0, vPlantWPos.y);
               float pBackWall = 1.0 - smoothstep(-19.0, 8.0, vPlantWPos.z);
-              float pGorgeAo = mix(1.0, 0.22, pDepthInGorge * (0.55 * pSlotNarrow + 0.45 * pBackWall));
+              float pGorgeAo = mix(1.0, 0.56, pDepthInGorge * (0.55 * pSlotNarrow + 0.45 * pBackWall));
               reflectedLight.indirectDiffuse *= pGorgeAo;
               vec3 pViewDir = normalize(cameraPosition - vPlantWPos);
               float pBacklight = pow(max(dot(-pViewDir, normalize(uSunDir)), 0.0), 2.5);

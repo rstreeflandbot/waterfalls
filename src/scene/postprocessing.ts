@@ -92,7 +92,7 @@ const GTAO_CONTACT_SHADER = {
       }
 
       float distFade = 1.0 - smoothstep(45.0, 92.0, viewDist);
-      float ao = clamp(1.0 - (occ / float(TAPS)) * 1.45 * uStrength * distFade, 0.36, 1.0);
+      float ao = clamp(1.0 - (occ / float(TAPS)) * 1.15 * uStrength * distFade, 0.64, 1.0);
       gl_FragColor = vec4(baseColor.rgb * ao, baseColor.a);
     }
   `,
@@ -293,7 +293,7 @@ void main() {
     }
 
     float distFade = 1.0 - smoothstep(45.0, 92.0, -viewPos.z);
-    ao = clamp(1.0 - (occ / float(TAPS)) * 1.45 * uAoStrength * distFade, 0.38, 1.0);
+    ao = clamp(1.0 - (occ / float(TAPS)) * 1.15 * uAoStrength * distFade, 0.64, 1.0);
   }
 
   vec3 sunShaftColor = vec3(0.0);
@@ -453,8 +453,7 @@ const AGX_GRADE_SHADER = {
 
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
       if (uForestMode > 0.5) {
-        color = mix(vec3(luma), color, 1.24);
-        color = pow(max(color, vec3(0.0)), vec3(1.07));
+        color = mix(vec3(luma), color, 1.2);
       }
 
       vec3 coolShadows = vec3(0.96, 0.99, 1.04);
@@ -634,7 +633,7 @@ export function createPostProcessing(options: {
       .normalize();
     rayTintVec.set(preset.godRayTint[0], preset.godRayTint[1], preset.godRayTint[2]);
 
-    const aoStrength = !options.isSoftwareGpu && isForest ? 0.92 : 0.0;
+    const aoStrength = !options.isSoftwareGpu && isForest ? 0.56 : 0.0;
     const rayStrength = options.isSoftwareGpu ? 0.0 : preset.godRayStrength;
 
     if (useHalfResMobileFx) {

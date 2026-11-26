@@ -335,7 +335,7 @@ export function createWaterfallParticles(options: {
     config: {
       count: options.reducedOverdraw ? 42 : 68,
       seed: 10101,
-      opacityScale: isForest ? 0.21 : 0.34,
+      opacityScale: isForest ? 0.14 : 0.34,
       minScale: 2.8,
       maxScale: 5.5,
       minDuration: 2.8,
@@ -362,7 +362,7 @@ export function createWaterfallParticles(options: {
     config: {
       count: options.reducedOverdraw ? 28 : 48,
       seed: 20202,
-      opacityScale: isForest ? 0.14 : 0.16,
+      opacityScale: isForest ? 0.09 : 0.16,
       minScale: 6.2,
       maxScale: 11.6,
       minDuration: 6.8,
@@ -392,7 +392,7 @@ export function createWaterfallParticles(options: {
       config: {
         count: options.reducedOverdraw ? 24 : 42,
         seed: 30303,
-        opacityScale: 0.22,
+        opacityScale: 0.15,
         minScale: 2.6,
         maxScale: 5.4,
         minDuration: 2.8,

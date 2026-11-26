@@ -193,10 +193,10 @@ function createTriplanarTerrainMaterial(options: {
 
         vec3 icelandRockCol = basaltRaw * vec3(0.74, 0.78, 0.85);
 
-        vec3 columbiaBasalt = basaltRaw * mix(vec3(0.30, 0.27, 0.29), vec3(0.46, 0.39, 0.36), strataNoise);
+        vec3 columbiaBasalt = basaltRaw * mix(vec3(0.46, 0.40, 0.39), vec3(0.64, 0.52, 0.46), strataNoise);
         vec3 lowerMossRockRaw = sampleTriplanarColor(uMossyRockAlbedo, tPos, triWeights, 0.15);
         vec3 lowerMossRockRma = sampleTriplanarColor(uMossyRockRma, tPos, triWeights, 0.15);
-        vec3 lowerMossRockCol = lowerMossRockRaw * mix(vec3(0.26, 0.31, 0.24), vec3(0.42, 0.40, 0.32), detailNoise * 0.55);
+        vec3 lowerMossRockCol = lowerMossRockRaw * mix(vec3(0.46, 0.52, 0.42), vec3(0.62, 0.58, 0.48), detailNoise * 0.55);
 
         float lowerGorgeBlend = 1.0 - smoothstep(13.5, 24.0, tPos.y + (macroNoise - 0.5) * 4.5);
         vec3 forestRockCol = mix(columbiaBasalt, lowerMossRockCol, lowerGorgeBlend);
@@ -209,8 +209,8 @@ function createTriplanarTerrainMaterial(options: {
         vec3 mossTri = sampleTriplanarColor(uMossAlbedo, tPos, triWeights, mossScale);
         vec3 mossRaw = mix(mossPlanar, mossTri, uForestMode);
         vec3 icelandMoss = mossRaw * 0.92;
-        vec3 deepForestMoss = mossRaw * vec3(0.14, 0.34, 0.08);
-        vec3 sunlitChartreuseMoss = mossRaw * vec3(0.48, 0.68, 0.14);
+        vec3 deepForestMoss = mossRaw * vec3(0.24, 0.52, 0.14);
+        vec3 sunlitChartreuseMoss = mossRaw * vec3(0.58, 0.78, 0.18);
         vec3 forestMoss = mix(
           deepForestMoss,
           sunlitChartreuseMoss,
@@ -260,7 +260,7 @@ function createTriplanarTerrainMaterial(options: {
         float terrainWetness = clamp(max(poolWet, sprayWet * 0.96), 0.0, 1.0);
 
         float trickle = smoothstep(0.68, 0.90, texture2D(uNoiseTex, vec2((tPos.x + tPos.z) * 0.28, tPos.y * 0.05 + uTime * 0.16)).b) * sprayWet * (1.0 - abs(tNorm.y));
-        float wetDarken = mix(0.50, 0.24, uForestMode);
+        float wetDarken = mix(0.50, 0.46, uForestMode);
         groundAlbedo *= mix(1.0, wetDarken, terrainWetness * (1.0 - totalMoss * 0.52));
         groundAlbedo += vec3(0.018, 0.024, 0.028) * trickle;
 
@@ -345,9 +345,9 @@ function createTriplanarTerrainMaterial(options: {
           float slotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vTerrainWorldPos.x));
           float depthInGorge = 1.0 - smoothstep(1.5, 23.0, vTerrainWorldPos.y);
           float backWallPocket = 1.0 - smoothstep(-19.0, 8.0, vTerrainWorldPos.z);
-          float gorgeSkyAo = mix(1.0, 0.18, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
+          float gorgeSkyAo = mix(1.0, 0.52, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
           reflectedLight.indirectDiffuse *= gorgeSkyAo;
-          reflectedLight.indirectSpecular *= mix(1.0, gorgeSkyAo, 0.65);
+          reflectedLight.indirectSpecular *= mix(1.0, gorgeSkyAo, 0.55);
         }
         `,
       );
@@ -533,12 +533,12 @@ function createBensonConcreteMaterial(options: {
         /* glsl */ `
         #include <map_fragment>
         float lumaC = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-        diffuseColor.rgb = mix(vec3(lumaC), diffuseColor.rgb, 0.32) * vec3(1.18, 1.18, 1.12);
+        diffuseColor.rgb = mix(vec3(lumaC), diffuseColor.rgb, 0.32) * vec3(1.26, 1.26, 1.20);
         vec3 bN = normalize(vBridgeWNorm);
-        float undersideAo = mix(0.26, 1.0, smoothstep(-0.65, 0.25, bN.y));
-        float mistWeather = 1.0 - smoothstep(11.0, 15.8, vBridgeWPos.y) * 0.22;
-        float mossEdge = smoothstep(5.5, 11.0, abs(vBridgeWPos.x)) * smoothstep(-0.1, 0.7, bN.y) * 0.35;
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.18, 0.28, 0.12), mossEdge);
+        float undersideAo = mix(0.52, 1.0, smoothstep(-0.65, 0.25, bN.y));
+        float mistWeather = 1.0 - smoothstep(11.0, 15.8, vBridgeWPos.y) * 0.14;
+        float mossEdge = smoothstep(5.5, 11.0, abs(vBridgeWPos.x)) * smoothstep(-0.1, 0.7, bN.y) * 0.32;
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.24, 0.36, 0.16), mossEdge);
         diffuseColor.rgb *= undersideAo * mistWeather;
         `,
       )
@@ -546,7 +546,7 @@ function createBensonConcreteMaterial(options: {
         '#include <aomap_fragment>',
         /* glsl */ `
         #include <aomap_fragment>
-        float bridgeGorgeAo = mix(0.45, 0.85, smoothstep(11.0, 16.5, vBridgeWPos.y));
+        float bridgeGorgeAo = mix(0.72, 0.96, smoothstep(11.0, 16.5, vBridgeWPos.y));
         reflectedLight.indirectDiffuse *= bridgeGorgeAo;
         `,
       );
