@@ -33,11 +33,11 @@ export function createIcelandicLighting(scene: THREE.Scene): LightingSystem {
   group.add(sunLight);
   group.add(sunLight.target);
 
-  const skyHemisphere = new THREE.HemisphereLight(0x88a8cb, 0x1a2026, 1.15);
+  const skyHemisphere = new THREE.HemisphereLight(0x96b5d8, 0x222932, 1.35);
   group.add(skyHemisphere);
 
-  const valleyFillLight = new THREE.DirectionalLight(0x7d9fc4, 0.95);
-  valleyFillLight.position.set(38, 26, 48);
+  const valleyFillLight = new THREE.DirectionalLight(0x88acd2, 1.25);
+  valleyFillLight.position.set(42, 24, 46);
   group.add(valleyFillLight);
 
   const mistBounceLight = new THREE.PointLight(0xffc998, 8.5, 36, 1.8);

@@ -17,11 +17,11 @@ export interface WaterfallConfig {
 export const SCENE_CONFIG: WaterfallConfig = {
   crestHeight: 23.5,
   crestZ: -14.2,
-  crestWidth: 10.4,
-  plungeCenterZ: -10.4,
-  plungeWidth: 12.6,
+  crestWidth: 10.6,
+  plungeCenterZ: -10.3,
+  plungeWidth: 12.8,
   poolSurfaceY: 0.0,
-  sunDirection: normalizeVec3({ x: -0.72, y: 0.21, z: -0.66 }),
+  sunDirection: normalizeVec3({ x: -0.72, y: 0.22, z: -0.66 }),
 };
 
 export interface ParabolicPointInput {
@@ -123,6 +123,11 @@ export function computeParabolicFallPoint(input: ParabolicPointInput): Parabolic
   return { y, z, speedFactor };
 }
 
+export function computeGravityFallTime(progress: number): number {
+  const clamped = clamp({ value: progress, min: 0, max: 1 });
+  return Math.sqrt(clamped * 0.92 + 0.08) - Math.sqrt(0.08);
+}
+
 export function computeRockWetness(input: WetnessInput): number {
   const poolProximity =
     1 -
@@ -204,19 +209,19 @@ export function computeOpenVolcanicTerrainHeight(input: TerrainHeightInput): num
 
   const riverCenterX = computeRiverCenterX(z);
   const riverHalfWidth =
-    7.2 +
-    Math.exp(-Math.pow((z - (SCENE_CONFIG.plungeCenterZ + 4)) / 10, 2)) * 5.2 +
-    smoothstep({ edge0: 14, edge1: 95, value: z }) * 8.5;
+    7.8 +
+    Math.exp(-Math.pow((z - (SCENE_CONFIG.plungeCenterZ + 4)) / 10, 2)) * 5.6 +
+    smoothstep({ edge0: 14, edge1: 95, value: z }) * 9.0;
   const distToRiver = Math.abs(x - riverCenterX);
   const riverMask =
-    smoothstep({ edge0: cliffLineZ + 1.0, edge1: cliffLineZ + 8.0, value: z }) *
+    smoothstep({ edge0: cliffLineZ + 1.0, edge1: cliffLineZ + 7.5, value: z }) *
     (1 -
       smoothstep({
-        edge0: riverHalfWidth * 0.65,
+        edge0: riverHalfWidth * 0.6,
         edge1: riverHalfWidth + 6.5,
         value: distToRiver,
       }));
-  const riverBedDepth = -1.65 * riverMask;
+  const riverBedDepth = -1.75 * riverMask;
 
   const valleyOpenMask = smoothstep({
     edge0: cliffLineZ + 2.0,
@@ -231,15 +236,16 @@ export function computeOpenVolcanicTerrainHeight(input: TerrainHeightInput): num
   const farRollingHills =
     valleyOpenMask *
     smoothstep({ edge0: 42, edge1: 118, value: Math.abs(x) }) *
-    (11.0 + Math.abs(Math.sin(z * 0.045 + x * 0.03)) * 12.0);
+    (11.0 + Math.abs(Math.sin(z * 0.045 + x * 0.03)) * 11.0);
 
-  const distantMountainMask = 1 - smoothstep({ edge0: -125, edge1: -36, value: z });
-  const distantMountains =
-    distantMountainMask *
-    (16.0 +
-      Math.pow(Math.abs(Math.sin(x * 0.036 + 0.55)), 1.3) * 34.0 +
-      Math.abs(Math.cos(x * 0.078 - z * 0.042)) * 14.0 +
-      Math.sin(x * 0.17 + z * 0.14) * 3.8);
+  const distantMountainMask = 1 - smoothstep({ edge0: -135, edge1: -44, value: z });
+  const mesaWaveA = Math.sin(x * 0.028 + 0.7) * 0.5 + 0.5;
+  const mesaWaveB = Math.cos(x * 0.052 - z * 0.024 + 1.2) * 0.5 + 0.5;
+  const volcanicMesa =
+    smoothstep({ edge0: 0.15, edge1: 0.85, value: mesaWaveA * 0.65 + mesaWaveB * 0.35 }) * 28.0;
+  const ridgeCrenellation =
+    Math.sin(x * 0.11 + z * 0.06) * 4.2 + Math.cos(x * 0.19 - z * 0.12) * 2.1;
+  const distantMountains = distantMountainMask * (12.0 + volcanicMesa + ridgeCrenellation);
 
   const rockDetail =
     Math.sin(x * 0.34 + z * 0.28) * 0.38 +
@@ -260,7 +266,7 @@ export function generateBasaltColumnLayout(options: ColumnLayoutOptions): Basalt
     const t = i / Math.max(1, options.cliffClusterCount - 1);
     const x = -34 + t * 68 + (nextRand() - 0.5) * 1.6;
 
-    if (Math.abs(x) < 4.9) {
+    if (Math.abs(x) < 5.0) {
       continue;
     }
 
@@ -294,7 +300,7 @@ export function generateBasaltColumnLayout(options: ColumnLayoutOptions): Basalt
   for (let i = 0; i < options.ledgeOutcropCount; i++) {
     const side = i % 2 === 0 ? -1 : 1;
     const rank = Math.floor(i / 2) / Math.max(1, Math.floor(options.ledgeOutcropCount / 2));
-    const x = side * (5.2 + rank * 19.0 + (nextRand() - 0.5) * 1.4);
+    const x = side * (5.3 + rank * 19.0 + (nextRand() - 0.5) * 1.4);
     const cliffZ = computeEscarpmentLineZ(x);
     const z = cliffZ + 0.6 + nextRand() * 2.6;
 

@@ -127,11 +127,11 @@ function createTriplanarVolcanicTerrainMaterial(
         float mossScale = 0.115;
         float sandScale = 0.16;
 
-        vec3 basaltCol = sampleTriplanarColor(uBasaltAlbedo, tPos, triWeights, rockScale);
+        vec3 basaltCol = sampleTriplanarColor(uBasaltAlbedo, tPos, triWeights, rockScale) * 1.42;
         vec3 basaltRma = sampleTriplanarColor(uBasaltRma, tPos, triWeights, rockScale);
         vec3 mossCol = texture2D(uMossAlbedo, tPos.xz * mossScale).rgb;
         vec3 mossRma = texture2D(uMossRma, tPos.xz * mossScale).rgb;
-        vec3 sandCol = texture2D(uSandAlbedo, tPos.xz * sandScale).rgb * vec3(0.44, 0.47, 0.52);
+        vec3 sandCol = texture2D(uSandAlbedo, tPos.xz * sandScale).rgb * vec3(0.46, 0.49, 0.54);
         vec3 sandRma = texture2D(uSandRma, tPos.xz * sandScale).rgb;
 
         float macroNoise = texture2D(uNoiseTex, tPos.xz * 0.018).r;
@@ -161,8 +161,8 @@ function createTriplanarVolcanicTerrainMaterial(
         float terrainWetness = clamp(max(poolWet, sprayWet * 0.94), 0.0, 1.0);
 
         float trickle = smoothstep(0.66, 0.90, texture2D(uNoiseTex, vec2((tPos.x + tPos.z) * 0.28, tPos.y * 0.05 + uTime * 0.16)).b) * sprayWet * (1.0 - abs(tNorm.y));
-        groundAlbedo *= mix(1.0, 0.38, terrainWetness * (1.0 - rawMoss * 0.72));
-        groundAlbedo += vec3(0.035, 0.042, 0.05) * trickle;
+        groundAlbedo *= mix(1.0, 0.58, terrainWetness * (1.0 - rawMoss * 0.72));
+        groundAlbedo += vec3(0.035, 0.045, 0.055) * trickle;
 
         diffuseColor.rgb = groundAlbedo;
         `,
@@ -239,11 +239,11 @@ function createBasaltRockMaterial(options: {
   const material = new THREE.MeshStandardMaterial({
     map: options.textures.basalt.albedoMap,
     normalMap: options.textures.basalt.normalMap,
-    normalScale: new THREE.Vector2(1.45, 1.45),
+    normalScale: new THREE.Vector2(1.65, 1.65),
     roughnessMap: options.textures.basalt.rmaMap,
-    roughness: 0.92,
-    metalness: 0.05,
-    envMapIntensity: 1.25,
+    roughness: 0.88,
+    metalness: 0.06,
+    envMapIntensity: 1.75,
   });
 
   material.onBeforeCompile = (shader) => {
@@ -313,7 +313,7 @@ function createBasaltRockMaterial(options: {
         float rkFallDist = length(vec2(rkPos.x * 0.65, rkPos.z - uPlungeZ));
         float rkSprayWet = (1.0 - smoothstep(4.5, 16.5, rkFallDist)) * (1.0 - smoothstep(uCrestHeight + 0.5, uCrestHeight + 3.5, rkPos.y));
         float rkWet = clamp(max(rkPoolWet, rkSprayWet * 0.94), 0.0, 1.0);
-        diffuseColor.rgb *= mix(1.0, 0.36, rkWet * (1.0 - capMask * 0.75));
+        diffuseColor.rgb = diffuseColor.rgb * 1.45 * mix(1.0, 0.62, rkWet * (1.0 - capMask * 0.75));
         `,
       )
       .replace(

@@ -1,25 +1,39 @@
 export const WATERFALL_CURTAIN_VERTEX_SHADER = /* glsl */ `
+attribute float aChuteMask;
+
 uniform float uTime;
 uniform float uTurbulence;
+uniform float uSpeed;
 uniform float uPhaseOffset;
-uniform sampler2D uNoiseTex;
+uniform sampler2D uFoamTex;
 
 varying vec2 vUv;
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
+varying float vChuteMask;
+
+float gravityTau(float progress) {
+  return sqrt(clamp(progress, 0.0, 1.0) * 0.92 + 0.08) - sqrt(0.08);
+}
 
 void main() {
   vUv = uv;
+  vChuteMask = aChuteMask;
   vec3 pos = position;
 
-  float fallProgress = 1.0 - uv.y;
-  float accelScroll = uTime * (0.42 + fallProgress * 0.22) + uPhaseOffset * 0.15;
+  float fallProgress = clamp(1.0 - uv.y, 0.0, 1.0);
+  float tau = gravityTau(fallProgress);
 
-  float surge = texture2D(uNoiseTex, vec2(uv.x * 1.1, uv.y * 0.55 + accelScroll)).r - 0.5;
-  float ripple = sin(uv.y * 14.0 + uTime * 6.8 + uv.x * 7.5 + uPhaseOffset) * 0.5;
+  float flowV1 = tau * 1.85 - uTime * uSpeed * 0.56 + uPhaseOffset;
+  float flowV2 = tau * 3.10 - uTime * uSpeed * 0.78 - uPhaseOffset * 0.6;
 
-  float displacementMask = smoothstep(0.0, 0.14, fallProgress) * (0.35 + 0.65 * fallProgress);
-  pos += normal * (surge * 0.52 + ripple * 0.12) * uTurbulence * displacementMask;
+  float billowA = texture2D(uFoamTex, vec2(uv.x * 1.45 + uPhaseOffset * 0.13, flowV1)).r;
+  float billowB = texture2D(uFoamTex, vec2(uv.x * 2.75 - uPhaseOffset * 0.21, flowV2)).r;
+  float surgeHeight = (billowA * 0.62 + billowB * 0.38) - 0.48;
+
+  float edgeHold = smoothstep(0.0, 0.12, uv.x) * smoothstep(1.0, 0.88, uv.x);
+  float displacementMask = smoothstep(0.02, 0.18, fallProgress) * (0.35 + 0.65 * fallProgress) * edgeHold;
+  pos += normal * surgeHeight * uTurbulence * displacementMask;
 
   vec4 worldPosition = modelMatrix * vec4(pos, 1.0);
   vWorldPos = worldPosition.xyz;
@@ -35,6 +49,7 @@ uniform float uOpacity;
 uniform float uSpeed;
 uniform float uPhaseOffset;
 uniform float uCoreDensity;
+uniform float uHorizontalRepeat;
 uniform vec3 uSunDirection;
 uniform sampler2D uNoiseTex;
 uniform sampler2D uFoamTex;
@@ -42,93 +57,143 @@ uniform sampler2D uFoamTex;
 varying vec2 vUv;
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
+varying float vChuteMask;
+
+float gravityTau(float progress) {
+  return sqrt(clamp(progress, 0.0, 1.0) * 0.92 + 0.08) - sqrt(0.08);
+}
+
+vec4 sampleWaterfallField(vec2 baseUv, float tau, float time) {
+  float flowA = tau * 2.25 - time * uSpeed * 0.52 + uPhaseOffset;
+  float flowB = tau * 3.85 - time * uSpeed * 0.76 - uPhaseOffset * 0.73;
+
+  vec2 warpUv = vec2(baseUv.x * 0.65 + uPhaseOffset * 0.19, tau * 1.2 - time * uSpeed * 0.30);
+  vec2 warp = (texture2D(uNoiseTex, warpUv).rg - 0.5) * 0.042;
+
+  vec4 layerA = texture2D(uFoamTex, vec2(baseUv.x * uHorizontalRepeat + warp.x, flowA + warp.y));
+  vec4 layerB = texture2D(
+    uFoamTex,
+    vec2(baseUv.x * (uHorizontalRepeat * 1.72) - warp.x * 1.25 + 0.37, flowB)
+  );
+
+  float plume = layerA.r * 0.58 + layerB.r * 0.42;
+  float filaments = max(layerA.g, layerB.g * 0.92);
+  float spray = layerA.b * 0.5 + layerB.b * 0.5;
+  float edgeMask = layerA.a * 0.6 + layerB.a * 0.4;
+  return vec4(plume, filaments, spray, edgeMask);
+}
 
 void main() {
-  float fallProgress = 1.0 - vUv.y;
-  float accelFactor = 1.0 + fallProgress * 0.88;
-  float flowY = vUv.y * (0.95 + fallProgress * 0.32) + uTime * uSpeed * 0.28 * accelFactor + uPhaseOffset * 0.13;
+  float fallProgress = clamp(1.0 - vUv.y, 0.0, 1.0);
+  float tau = gravityTau(fallProgress);
 
-  vec4 warpSample = texture2D(uNoiseTex, vec2(vUv.x * 1.4 + uPhaseOffset * 0.17, flowY * 0.42));
-  vec2 distort = (warpSample.rg - 0.5) * 0.09;
+  vec4 field = sampleWaterfallField(vUv, tau, uTime);
+  float epsU = 0.008;
+  float epsT = 0.011;
+  vec4 fieldRight = sampleWaterfallField(vUv + vec2(epsU, 0.0), tau, uTime);
+  vec4 fieldDown = sampleWaterfallField(vUv, tau + epsT, uTime);
 
-  float foamPrimary = texture2D(uFoamTex, vec2(vUv.x * 2.1 + distort.x, flowY * 1.05 + distort.y)).r;
-  float foamSecondary = texture2D(
-    uFoamTex,
-    vec2(vUv.x * 3.8 - distort.x * 1.2 + uPhaseOffset * 0.21, flowY * 1.65 + uTime * uSpeed * 0.14)
-  ).r;
-  vec4 fineDetail = texture2D(uNoiseTex, vec2(vUv.x * 5.6 + distort.x * 2.0, flowY * 2.2));
+  float heightC = field.r * 0.7 + field.g * 0.3;
+  float heightR = fieldRight.r * 0.7 + fieldRight.g * 0.3;
+  float heightD = fieldDown.r * 0.7 + fieldDown.g * 0.3;
 
-  float chuteMask = 0.72 + 0.28 * sin(vUv.x * 15.0 + warpSample.r * 4.0);
-  float aeration = clamp(
-    foamPrimary * 0.56 + foamSecondary * 0.34 + fineDetail.g * 0.24,
+  vec3 baseNormal = normalize(vWorldNormal);
+  vec3 refUp = abs(baseNormal.y) > 0.92 ? vec3(0.0, 0.0, -1.0) : vec3(0.0, 1.0, 0.0);
+  vec3 tangentRight = normalize(cross(refUp, baseNormal));
+  vec3 tangentDown = normalize(cross(tangentRight, baseNormal));
+
+  float slopeX = (heightC - heightR) * 4.4;
+  float slopeY = (heightC - heightD) * 4.2;
+  vec3 foamNormal = normalize(baseNormal + tangentRight * slopeX + tangentDown * slopeY);
+
+  float edgeDist = min(vUv.x, 1.0 - vUv.x);
+  float raggedEdge = smoothstep(0.015, 0.16, edgeDist + (field.a - 0.46) * 0.14);
+  float topFeather = smoothstep(0.0, 0.045, fallProgress);
+  float bottomPlunge = smoothstep(0.74, 1.0, fallProgress);
+
+  float aerationGrowth = smoothstep(0.04, 0.42, fallProgress);
+  float plumeDensity = clamp(
+    (field.r * 0.62 + field.g * 0.48 + field.b * 0.22) * (0.62 + 0.52 * vChuteMask) *
+      (0.55 + 0.55 * aerationGrowth),
     0.0,
-    1.0
+    1.25
   );
-  aeration *= chuteMask;
 
-  float horizontalFeather = smoothstep(0.0, 0.15, vUv.x) * smoothstep(1.0, 0.85, vUv.x);
-  float topBlend = smoothstep(0.0, 0.05, fallProgress);
-  float bottomPlungeFoam = smoothstep(0.76, 1.0, fallProgress);
-
-  float densityMask = mix(
-    smoothstep(0.24, 0.74, aeration + bottomPlungeFoam * 0.32),
-    smoothstep(0.10, 0.58, aeration + 0.24),
+  float alpha = mix(
+    smoothstep(0.24, 0.78, plumeDensity + bottomPlunge * 0.35),
+    smoothstep(0.08, 0.52, plumeDensity + 0.32),
     uCoreDensity
   );
+  alpha *= raggedEdge * (0.35 + 0.65 * topFeather) * uOpacity;
+  alpha = clamp(alpha + bottomPlunge * raggedEdge * 0.28 * uOpacity, 0.0, 0.98);
 
-  float alpha = horizontalFeather * (0.28 + 0.72 * topBlend) * densityMask * uOpacity;
-  alpha = clamp(alpha + bottomPlungeFoam * horizontalFeather * 0.32 * uOpacity, 0.0, 0.96);
-  if (alpha < 0.015) {
+  if (alpha < 0.02) {
     discard;
   }
 
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
   vec3 sunDir = normalize(uSunDirection);
-  vec3 normal = normalize(vWorldNormal);
+  vec3 skyDir = vec3(0.0, 1.0, 0.0);
 
-  float sunFacing = max(dot(normal, sunDir), 0.0);
-  float backScatter = pow(max(dot(-viewDir, sunDir), 0.0), 3.6);
-  float rimFresnel = pow(1.0 - abs(dot(normal, viewDir)), 2.5);
+  float sunDiffuse = clamp(dot(foamNormal, sunDir) * 0.55 + 0.45, 0.0, 1.0);
+  float skyDiffuse = clamp(dot(foamNormal, skyDir) * 0.5 + 0.5, 0.0, 1.0);
+  float fresnel = pow(1.0 - clamp(dot(foamNormal, viewDir), 0.0, 1.0), 3.4);
+  float backScatter = pow(max(dot(-viewDir, sunDir), 0.0), 3.2);
 
-  vec3 deepGlacialWater = vec3(0.13, 0.21, 0.27);
-  vec3 shadedFoam = vec3(0.46, 0.55, 0.63);
-  vec3 crispFoam = vec3(0.84, 0.89, 0.93);
-  vec3 goldenRim = vec3(1.02, 0.76, 0.52);
+  vec3 halfVec = normalize(sunDir + viewDir);
+  float liquidSpec = pow(max(dot(foamNormal, halfVec), 0.0), 110.0) * 1.45;
+  float skyReflSpec = pow(max(dot(foamNormal, normalize(skyDir + viewDir)), 0.0), 18.0) * 0.24;
 
-  float crestWaterDark = (1.0 - smoothstep(0.0, 0.18, fallProgress));
-  float foamBrightness = smoothstep(0.26, 0.86, aeration + bottomPlungeFoam * 0.26);
+  vec3 darkLiquidCore = vec3(0.075, 0.145, 0.185);
+  vec3 midGlacialLiquid = vec3(0.18, 0.28, 0.35);
+  vec3 shadowFoam = vec3(0.32, 0.40, 0.48);
+  vec3 litFoam = vec3(0.84, 0.88, 0.92);
+  vec3 warmSunFoam = vec3(1.04, 0.82, 0.60);
 
-  vec3 waterColor = mix(deepGlacialWater, shadedFoam, smoothstep(0.12, 0.58, aeration + 0.18));
-  waterColor = mix(waterColor, crispFoam, foamBrightness);
-  waterColor = mix(waterColor, deepGlacialWater * 0.9, crestWaterDark * (1.0 - foamBrightness) * 0.55);
+  float liquidMix = smoothstep(0.18, 0.62, plumeDensity);
+  vec3 liquidColor = mix(darkLiquidCore, midGlacialLiquid, skyDiffuse);
+  liquidColor += vec3(0.28, 0.36, 0.44) * fresnel * 0.65;
+  liquidColor += vec3(1.05, 0.78, 0.52) * liquidSpec * (1.0 - liquidMix * 0.65);
 
-  float topSunCatch = smoothstep(7.0, 22.0, vWorldPos.y);
-  float thinVeilMask = 1.0 - smoothstep(0.35, 0.90, alpha);
-  float warmLight = clamp(
-    sunFacing * 0.35 +
-    backScatter * (0.22 + thinVeilMask * 0.45) +
-    rimFresnel * 0.26 +
-    topSunCatch * 0.18,
+  float selfShadow = clamp(0.42 + heightC * 0.68, 0.35, 1.05);
+  float foamHighlight = smoothstep(0.38, 0.94, plumeDensity + bottomPlunge * 0.24);
+  vec3 foamColor = mix(shadowFoam, litFoam, sunDiffuse * 0.72 + skyDiffuse * 0.28);
+  foamColor *= selfShadow;
+  foamColor = mix(foamColor, vec3(0.95, 0.96, 0.98), foamHighlight * sunDiffuse * 0.55);
+
+  vec3 color = mix(liquidColor, foamColor, clamp(liquidMix * (0.45 + 0.55 * aerationGrowth) + bottomPlunge * 0.4, 0.0, 0.94));
+  color += vec3(0.62, 0.74, 0.86) * skyReflSpec * (1.0 - foamHighlight * 0.5);
+
+  float topSunCatch = smoothstep(6.0, 22.5, vWorldPos.y);
+  float thinSprayMask = 1.0 - smoothstep(0.32, 0.88, alpha);
+  float warmRimAmount = clamp(
+    backScatter * (0.28 + thinSprayMask * 0.55) +
+    fresnel * 0.32 +
+    sunDiffuse * topSunCatch * 0.30,
     0.0,
-    0.72
+    0.75
   );
-  waterColor = mix(waterColor, goldenRim, warmLight * 0.38);
+  color = mix(color, warmSunFoam, warmRimAmount * 0.34);
 
-  float dist = length(cameraPosition - vWorldPos);
-  float fogAmount = 1.0 - exp(-pow(dist * 0.0056, 2.0));
-  vec3 fogColor = vec3(0.17, 0.21, 0.26);
-  waterColor = mix(waterColor, fogColor, fogAmount * 0.65);
+  float crestWaterGloss = (1.0 - smoothstep(0.0, 0.16, fallProgress)) * (1.0 - foamHighlight * 0.65);
+  color = mix(color, liquidColor * 0.88, crestWaterGloss * 0.55);
 
-  gl_FragColor = vec4(waterColor, alpha);
+  float camDist = length(cameraPosition - vWorldPos);
+  float fogAmount = 1.0 - exp(-pow(camDist * 0.0056, 2.0));
+  vec3 fogColor = vec3(0.16, 0.20, 0.25);
+  color = mix(color, fogColor, fogAmount * 0.62);
+
+  gl_FragColor = vec4(color, alpha);
 }
 `;
 
 export const PLUNGE_BOIL_VERTEX_SHADER = /* glsl */ `
 uniform float uTime;
-uniform sampler2D uNoiseTex;
+uniform sampler2D uFoamTex;
 
 varying vec2 vUv;
 varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
 varying float vBoilHeight;
 
 void main() {
@@ -136,17 +201,21 @@ void main() {
   vec3 pos = position;
 
   float radial = length(uv - 0.5) * 2.0;
-  float moundMask = 1.0 - smoothstep(0.22, 1.0, radial);
+  float ringPeak = sin(clamp(radial, 0.0, 1.0) * 3.14159);
+  float crownMask = smoothstep(1.0, 0.15, radial) * (0.45 + 0.55 * ringPeak);
 
-  float boilA = texture2D(uNoiseTex, vec2(pos.x * 0.12, pos.z * 0.12 - uTime * 0.32)).r;
-  float boilB = texture2D(uNoiseTex, vec2(pos.x * 0.24 + uTime * 0.16, pos.z * 0.24 - uTime * 0.38)).g;
-  float lift = (boilA * 0.55 + boilB * 0.45) * moundMask * 1.35;
+  vec2 centered = uv - 0.5;
+  float angle = atan(centered.y, centered.x);
+  float boilA = texture2D(uFoamTex, vec2(angle * 0.45, radial * 1.1 - uTime * 0.58)).r;
+  float boilB = texture2D(uFoamTex, vec2(pos.x * 0.14, pos.z * 0.14 - uTime * 0.45)).g;
+  float lift = (boilA * 0.62 + boilB * 0.38) * crownMask * 1.85;
 
   pos.y += lift;
   vBoilHeight = lift;
 
   vec4 worldPosition = modelMatrix * vec4(pos, 1.0);
   vWorldPos = worldPosition.xyz;
+  vWorldNormal = normalize(mat3(modelMatrix) * normal);
 
   gl_Position = projectionMatrix * viewMatrix * worldPosition;
 }
@@ -160,20 +229,27 @@ uniform sampler2D uFoamTex;
 
 varying vec2 vUv;
 varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
 varying float vBoilHeight;
 
 void main() {
   vec2 centered = (vUv - 0.5) * 2.0;
   float dist = length(centered);
+  if (dist > 1.0) {
+    discard;
+  }
+
+  float angle = atan(centered.y, centered.x);
   vec2 radialDir = dist > 0.001 ? centered / dist : vec2(0.0, 1.0);
 
-  vec2 advectedUv = centered * 0.72 - radialDir * uTime * 0.24;
-  vec4 sampleA = texture2D(uNoiseTex, advectedUv);
-  float foamSample = texture2D(uFoamTex, advectedUv * 1.45 + vec2(uTime * 0.08, -uTime * 0.12)).r;
+  vec2 radialUv = vec2(angle * 0.64, dist * 1.25 - uTime * 0.52);
+  vec4 foamA = texture2D(uFoamTex, radialUv);
+  vec4 foamB = texture2D(uFoamTex, centered * 0.9 - radialDir * uTime * 0.34);
+  vec4 noiseSample = texture2D(uNoiseTex, centered * 0.85 - radialDir * uTime * 0.22);
 
-  float edgeFade = 1.0 - smoothstep(0.42, 0.98, dist + (sampleA.r - 0.5) * 0.30);
-  float density = clamp(sampleA.g * 0.42 + foamSample * 0.52 + vBoilHeight * 0.32, 0.0, 1.0);
-  float alpha = edgeFade * smoothstep(0.24, 0.76, density) * 0.88;
+  float density = clamp(foamA.r * 0.45 + foamB.g * 0.42 + noiseSample.g * 0.25 + vBoilHeight * 0.28, 0.0, 1.0);
+  float edgeFade = 1.0 - smoothstep(0.42, 0.98, dist + (noiseSample.r - 0.5) * 0.34);
+  float alpha = edgeFade * smoothstep(0.24, 0.78, density) * 0.86;
 
   if (alpha < 0.02) {
     discard;
@@ -183,12 +259,17 @@ void main() {
   vec3 sunDir = normalize(uSunDirection);
   float warmRim = pow(max(dot(-viewDir, sunDir), 0.0), 3.0) * 0.45 + 0.15;
 
-  vec3 shadowFoam = vec3(0.42, 0.51, 0.59);
-  vec3 brightFoam = vec3(0.88, 0.92, 0.95);
-  vec3 warmGlow = vec3(1.02, 0.78, 0.56);
+  float shadowCrevice = clamp(0.48 + vBoilHeight * 0.42 + foamA.r * 0.25, 0.42, 1.0);
+  vec3 deepFroth = vec3(0.30, 0.39, 0.47);
+  vec3 brightFroth = vec3(0.86, 0.90, 0.93);
+  vec3 warmGlow = vec3(1.0, 0.78, 0.56);
 
-  vec3 color = mix(shadowFoam, brightFoam, smoothstep(0.28, 0.85, density));
-  color = mix(color, warmGlow, warmRim * 0.32 * smoothstep(0.2, 1.2, vBoilHeight));
+  vec3 color = mix(deepFroth, brightFroth, smoothstep(0.28, 0.86, density)) * shadowCrevice;
+  color = mix(color, warmGlow, warmRim * 0.28 * smoothstep(0.35, 1.5, vBoilHeight));
+
+  float camDist = length(cameraPosition - vWorldPos);
+  float fogAmount = 1.0 - exp(-pow(camDist * 0.0056, 2.0));
+  color = mix(color, vec3(0.16, 0.20, 0.25), fogAmount * 0.62);
 
   gl_FragColor = vec4(color, alpha);
 }

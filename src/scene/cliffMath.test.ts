@@ -3,6 +3,7 @@ import {
   SCENE_CONFIG,
   clamp,
   computeEscarpmentLineZ,
+  computeGravityFallTime,
   computeOpenVolcanicTerrainHeight,
   computeParabolicFallPoint,
   computeRiverCenterX,
@@ -72,6 +73,19 @@ describe('cliffMath', () => {
     expect(bottom.z).toBeCloseTo(-10.4, 5);
     expect(bottom.speedFactor).toBeGreaterThan(mid.speedFactor);
     expect(mid.speedFactor).toBeGreaterThan(top.speedFactor);
+  });
+
+  it('maps vertical fall progress to concave downward gravity fall time', () => {
+    const t0 = computeGravityFallTime(0);
+    const tQuarter = computeGravityFallTime(0.25);
+    const tHalf = computeGravityFallTime(0.5);
+    const tBottom = computeGravityFallTime(1);
+
+    expect(t0).toBeCloseTo(0, 5);
+    expect(tQuarter).toBeGreaterThan(t0);
+    expect(tHalf).toBeGreaterThan(tQuarter);
+    expect(tBottom).toBeGreaterThan(tHalf);
+    expect(tQuarter - t0).toBeGreaterThan(tBottom - tHalf);
   });
 
   it('assigns maximum wetness near the pool and waterfall splash zone', () => {

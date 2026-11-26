@@ -326,23 +326,27 @@ function createAnisotropicWaterfallFoamTexture(options: {
   readonly anisotropy: number;
 }): THREE.DataTexture {
   const { size } = options;
-  const data = new Uint8Array(size * size * 4);
   const rand = createSeededRandom(73319);
 
-  const makeGrid = (dims: { readonly cols: number; readonly rows: number }): Float32Array => {
-    const g = new Float32Array(dims.cols * dims.rows);
-    for (let i = 0; i < g.length; i++) {
-      g[i] = rand();
+  const createGradientField = (dims: {
+    readonly cols: number;
+    readonly rows: number;
+  }): Float32Array => {
+    const field = new Float32Array(dims.cols * dims.rows * 2);
+    for (let i = 0; i < dims.cols * dims.rows; i++) {
+      const angle = rand() * Math.PI * 2;
+      field[i * 2] = Math.cos(angle);
+      field[i * 2 + 1] = Math.sin(angle);
     }
-    return g;
+    return field;
   };
 
-  const sampleAniso = (input: {
+  const samplePerlin = (input: {
     readonly u: number;
     readonly v: number;
     readonly cols: number;
     readonly rows: number;
-    readonly grid: Float32Array;
+    readonly field: Float32Array;
   }): number => {
     const x = input.u * input.cols;
     const y = input.v * input.rows;
@@ -350,64 +354,153 @@ function createAnisotropicWaterfallFoamTexture(options: {
     const iy = Math.floor(y);
     const fx = x - ix;
     const fy = y - iy;
-    const ux = fx * fx * (3 - 2 * fx);
-    const uy = fy * fy * (3 - 2 * fy);
+
+    const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+    const uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
 
     const x0 = ((ix % input.cols) + input.cols) % input.cols;
     const y0 = ((iy % input.rows) + input.rows) % input.rows;
     const x1 = (x0 + 1) % input.cols;
     const y1 = (y0 + 1) % input.rows;
 
-    const a = input.grid[y0 * input.cols + x0] ?? 0.5;
-    const b = input.grid[y0 * input.cols + x1] ?? 0.5;
-    const c = input.grid[y1 * input.cols + x0] ?? 0.5;
-    const d = input.grid[y1 * input.cols + x1] ?? 0.5;
+    const dotGrad = (corner: {
+      readonly cx: number;
+      readonly cy: number;
+      readonly dx: number;
+      readonly dy: number;
+    }): number => {
+      const idx = (corner.cy * input.cols + corner.cx) * 2;
+      const gx = input.field[idx] ?? 0;
+      const gy = input.field[idx + 1] ?? 0;
+      return gx * corner.dx + gy * corner.dy;
+    };
 
-    return (a * (1 - ux) + b * ux) * (1 - uy) + (c * (1 - ux) + d * ux) * uy;
+    const n00 = dotGrad({ cx: x0, cy: y0, dx: fx, dy: fy });
+    const n10 = dotGrad({ cx: x1, cy: y0, dx: fx - 1, dy: fy });
+    const n01 = dotGrad({ cx: x0, cy: y1, dx: fx, dy: fy - 1 });
+    const n11 = dotGrad({ cx: x1, cy: y1, dx: fx - 1, dy: fy - 1 });
+
+    const nx0 = n00 + (n10 - n00) * ux;
+    const nx1 = n01 + (n11 - n01) * ux;
+    return clamp({ value: (nx0 + (nx1 - nx0) * uy) * 0.65 + 0.5, min: 0, max: 1 });
   };
 
-  const warpGrid = makeGrid({ cols: 8, rows: 4 });
-  const chuteGrid = makeGrid({ cols: 16, rows: 4 });
-  const streakGrid = makeGrid({ cols: 32, rows: 8 });
-  const filamentGrid = makeGrid({ cols: 64, rows: 16 });
-  const dropletGrid = makeGrid({ cols: 96, rows: 32 });
+  const warpField = createGradientField({ cols: 6, rows: 4 });
+  const chuteField = createGradientField({ cols: 14, rows: 4 });
+  const billowField = createGradientField({ cols: 26, rows: 10 });
+  const filamentField = createGradientField({ cols: 56, rows: 14 });
+  const microField = createGradientField({ cols: 96, rows: 36 });
+
+  const plumeBuffer = new Float32Array(size * size);
+  const filamentBuffer = new Float32Array(size * size);
+
+  const cometCount = 360;
+  for (let c = 0; c < cometCount; c++) {
+    const cx = rand();
+    const cy = rand();
+    const isMajorPlume = c < 110;
+    const radiusX = isMajorPlume ? 0.022 + rand() * 0.036 : 0.008 + rand() * 0.018;
+    const tailLen = isMajorPlume ? 0.14 + rand() * 0.22 : 0.07 + rand() * 0.16;
+    const strength = isMajorPlume ? 0.34 + rand() * 0.34 : 0.22 + rand() * 0.32;
+    const swayAmp = (rand() - 0.5) * 0.014;
+
+    const minPx = Math.floor((cx - radiusX * 1.4) * size);
+    const maxPx = Math.ceil((cx + radiusX * 1.4) * size);
+    const minPy = Math.floor((cy - tailLen) * size);
+    const maxPy = Math.ceil((cy + radiusX * 1.3) * size);
+
+    for (let py = minPy; py <= maxPy; py++) {
+      const wrappedY = ((py % size) + size) % size;
+      const dy = (py / size - cy) / tailLen;
+      if (dy < -1 || dy > 0.28) {
+        continue;
+      }
+
+      const alongTail = clamp({ value: (dy + 1) / 1.28, min: 0, max: 1 });
+      const headProfile =
+        dy <= 0 ? Math.pow(alongTail, 1.45) : Math.max(0, 1 - Math.pow(dy / 0.28, 2));
+      const widthAtY = radiusX * (0.28 + 0.78 * Math.pow(alongTail, 0.65));
+      const centerShiftX = Math.sin(alongTail * Math.PI * 2) * swayAmp;
+
+      for (let px = minPx; px <= maxPx; px++) {
+        const wrappedX = ((px % size) + size) % size;
+        const dx = (px / size - (cx + centerShiftX)) / Math.max(widthAtY, 0.001);
+        const absDx = Math.abs(dx);
+        if (absDx >= 1) {
+          continue;
+        }
+
+        const crossFade = Math.pow(1 - absDx * absDx, 2.0);
+        const value = headProfile * crossFade * strength;
+        const idx = wrappedY * size + wrappedX;
+
+        if (isMajorPlume) {
+          plumeBuffer[idx] = Math.min(1.4, (plumeBuffer[idx] ?? 0) + value);
+        } else {
+          filamentBuffer[idx] = Math.min(1.4, (filamentBuffer[idx] ?? 0) + value);
+        }
+      }
+    }
+  }
+
+  const data = new Uint8Array(size * size * 4);
 
   for (let y = 0; y < size; y++) {
     const v = y / size;
     for (let x = 0; x < size; x++) {
       const u = x / size;
 
-      const warpX = (sampleAniso({ u, v, cols: 8, rows: 4, grid: warpGrid }) - 0.5) * 0.09;
-      const warpedU = (u + warpX + 1) % 1;
+      const warpU = (samplePerlin({ u, v, cols: 6, rows: 4, field: warpField }) - 0.5) * 0.065;
+      const warpV =
+        (samplePerlin({
+          u: (u + 0.37) % 1,
+          v: (v + 0.53) % 1,
+          cols: 6,
+          rows: 4,
+          field: warpField,
+        }) -
+          0.5) *
+        0.045;
+      const su = (u + warpU + 1) % 1;
+      const sv = (v + warpV + 1) % 1;
 
-      const chute = sampleAniso({ u: warpedU, v, cols: 16, rows: 4, grid: chuteGrid });
-      const streak = sampleAniso({ u: warpedU, v, cols: 32, rows: 8, grid: streakGrid });
-      const filament = sampleAniso({ u: warpedU, v, cols: 64, rows: 16, grid: filamentGrid });
-      const droplets = sampleAniso({ u: warpedU, v, cols: 96, rows: 32, grid: dropletGrid });
+      const chute = samplePerlin({ u: su, v: sv, cols: 14, rows: 4, field: chuteField });
+      const billow = samplePerlin({ u: su, v: sv, cols: 26, rows: 10, field: billowField });
+      const filament = samplePerlin({ u: su, v: sv, cols: 56, rows: 14, field: filamentField });
+      const micro = samplePerlin({ u: su, v: sv, cols: 96, rows: 36, field: microField });
 
-      const ridge = 1 - Math.abs(streak * 2 - 1);
-      const sharpFilament = Math.pow(filament, 1.35);
-      const sprayBurst = Math.pow(droplets, 1.8) * 0.42;
+      const sx = Math.floor(su * size) % size;
+      const sy = Math.floor(sv * size) % size;
+      const plumeSample = clamp({ value: plumeBuffer[sy * size + sx] ?? 0, min: 0, max: 1 });
+      const fineComet = clamp({ value: filamentBuffer[sy * size + sx] ?? 0, min: 0, max: 1 });
 
-      const combined = clamp({
-        value: chute * 0.34 + ridge * 0.32 + sharpFilament * 0.28 + sprayBurst,
+      const ridgeFilament = 1 - Math.abs(filament * 2 - 1);
+      const plumeHeight = clamp({
+        value: plumeSample * 0.58 + billow * 0.3 + chute * 0.2 + fineComet * 0.16,
         min: 0,
         max: 1,
       });
-      const highContrast = clamp({
-        value: Math.pow(combined, 1.15) * 1.12,
+      const silkyStreaks = clamp({
+        value: fineComet * 0.54 + Math.pow(ridgeFilament, 1.6) * 0.42 + micro * 0.18,
+        min: 0,
+        max: 1,
+      });
+      const microSpray = clamp({
+        value: Math.pow(micro, 1.55) * 0.65 + fineComet * 0.45,
+        min: 0,
+        max: 1,
+      });
+      const breakupAlpha = clamp({
+        value: chute * 0.48 + plumeSample * 0.4 + ridgeFilament * 0.25,
         min: 0,
         max: 1,
       });
 
-      const byte = Math.round(highContrast * 255);
       const idx = (y * size + x) * 4;
-      data[idx] = byte;
-      data[idx + 1] = Math.round(
-        clamp({ value: ridge * 0.6 + droplets * 0.4, min: 0, max: 1 }) * 255,
-      );
-      data[idx + 2] = Math.round(clamp({ value: droplets, min: 0, max: 1 }) * 255);
-      data[idx + 3] = 255;
+      data[idx] = Math.round(plumeHeight * 255);
+      data[idx + 1] = Math.round(silkyStreaks * 255);
+      data[idx + 2] = Math.round(microSpray * 255);
+      data[idx + 3] = Math.round(breakupAlpha * 255);
     }
   }
 

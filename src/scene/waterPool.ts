@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WATER_POOL_FRAGMENT_SHADER, WATER_POOL_VERTEX_SHADER } from '../shaders/waterPoolShaders';
-import { SCENE_CONFIG } from './cliffMath';
+import { SCENE_CONFIG, computeOpenVolcanicTerrainHeight } from './cliffMath';
 
 export interface WaterPoolSystem {
   readonly mesh: THREE.Mesh;
@@ -12,8 +12,21 @@ export function createGlacialWaterPool(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly foamTexture: THREE.DataTexture;
 }): WaterPoolSystem {
-  const geometry = new THREE.PlaneGeometry(140, 165, 140, 150);
+  const meshCenterZ = 60.0;
+  const geometry = new THREE.PlaneGeometry(148, 168, 160, 170);
   geometry.rotateX(-Math.PI / 2);
+
+  const posAttr = geometry.attributes.position;
+  if (posAttr) {
+    const depths = new Float32Array(posAttr.count);
+    for (let i = 0; i < posAttr.count; i++) {
+      const worldX = posAttr.getX(i);
+      const worldZ = posAttr.getZ(i) + meshCenterZ;
+      const terrainY = computeOpenVolcanicTerrainHeight({ x: worldX, z: worldZ });
+      depths[i] = Math.max(0, SCENE_CONFIG.poolSurfaceY - terrainY);
+    }
+    geometry.setAttribute('aWaterDepth', new THREE.BufferAttribute(depths, 1));
+  }
 
   const sunDir = new THREE.Vector3(
     SCENE_CONFIG.sunDirection.x,
@@ -34,11 +47,11 @@ export function createGlacialWaterPool(options: {
     fragmentShader: WATER_POOL_FRAGMENT_SHADER,
     uniforms,
     transparent: true,
-    depthWrite: true,
+    depthWrite: false,
   });
 
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(0, SCENE_CONFIG.poolSurfaceY, 64.0);
+  mesh.position.set(0, SCENE_CONFIG.poolSurfaceY, meshCenterZ);
   mesh.renderOrder = 1;
 
   return {
