@@ -17,9 +17,9 @@ export interface WaterfallConfig {
 export const SCENE_CONFIG: WaterfallConfig = {
   crestHeight: 23.5,
   crestZ: -14.2,
-  crestWidth: 10.6,
-  plungeCenterZ: -10.3,
-  plungeWidth: 12.6,
+  crestWidth: 11.4,
+  plungeCenterZ: -10.2,
+  plungeWidth: 13.8,
   poolSurfaceY: 0.0,
   sunDirection: normalizeVec3({ x: -0.72, y: 0.24, z: -0.65 }),
 };
@@ -211,13 +211,24 @@ export function computeRiverCenterX(z: number): number {
 }
 
 export function computeEscarpmentLineZ(x: number): number {
-  const cavernRecess = -5.8 * Math.exp(-Math.pow(x / 7.8, 2));
-  const sweepingCurve = -Math.pow(Math.abs(x) * 0.052, 1.42) * 2.8;
-  const rockyMeander =
-    Math.sin(x * 0.082) * 2.2 +
-    Math.cos(x * 0.19) * 0.95 +
-    (valueNoise2d({ x: x * 0.14, z: 3.1 }) - 0.5) * 2.4;
-  return SCENE_CONFIG.crestZ + cavernRecess + sweepingCurve + rockyMeander;
+  const shallowNotch = -1.35 * Math.exp(-Math.pow((x + 0.9) / 6.4, 2));
+  const sweepingCurve = -Math.pow(Math.abs(x) * 0.052, 1.42) * 2.7;
+  const asymmetricJag =
+    Math.sin(x * 0.11 + 0.4) * 1.65 +
+    Math.cos(x * 0.27 - 0.8) * 0.85 +
+    (valueNoise2d({ x: x * 0.18, z: 3.1 }) - 0.5) * 2.1;
+  return SCENE_CONFIG.crestZ + shallowNotch + sweepingCurve + asymmetricJag;
+}
+
+export function computeWaterfallCrestHeight(x: number): number {
+  const mainErodedNotch = -0.75 * Math.exp(-Math.pow((x + 1.1) / 3.4, 2));
+  const leftStepDrop = -1.25 * Math.exp(-Math.pow((x + 4.4) / 1.9, 2));
+  const rightRockRise = 0.72 * Math.exp(-Math.pow((x - 3.6) / 2.2, 2));
+  const jaggedLip =
+    Math.sin(x * 0.85 + 0.5) * 0.34 +
+    Math.cos(x * 1.9 - 0.4) * 0.18 +
+    (valueNoise2d({ x: x * 0.65, z: 7.4 }) - 0.5) * 0.55;
+  return SCENE_CONFIG.crestHeight + mainErodedNotch + leftStepDrop + rightRockRise + jaggedLip;
 }
 
 export function warpTerrainCoordinate(normalized: number): number {
@@ -229,39 +240,51 @@ export function warpTerrainCoordinate(normalized: number): number {
 export function computeOpenVolcanicTerrainHeight(input: TerrainHeightInput): number {
   const { x, z } = input;
   const cliffLineZ = computeEscarpmentLineZ(x);
+  const nearWaterfall = 1 - smoothstep({ edge0: 5.5, edge1: 11.0, value: Math.abs(x) });
 
+  const cliffDropStart = cliffLineZ - (1.8 + (1 - nearWaterfall) * 1.4);
+  const cliffDropEnd = cliffLineZ + (3.6 + (1 - nearWaterfall) * 2.4);
   const escarpmentTransition =
     1 -
     smoothstep({
-      edge0: cliffLineZ - 3.2,
-      edge1: cliffLineZ + 5.8,
+      edge0: cliffDropStart,
+      edge1: cliffDropEnd,
       value: z,
     });
 
   const riverNotchDist = Math.abs(x - Math.sin((z + 14) * 0.05) * 1.2);
   const upperGorgeNotch =
-    (1 - smoothstep({ edge0: 4.6, edge1: 10.2, value: riverNotchDist })) *
-    (1 - smoothstep({ edge0: -42, edge1: -11, value: z }));
+    (1 - smoothstep({ edge0: 4.8, edge1: 10.6, value: riverNotchDist })) *
+    (1 - smoothstep({ edge0: -44, edge1: cliffLineZ + 2.5, value: z }));
 
   const lateralSlopeDown = 1 - smoothstep({ edge0: 34, edge1: 118, value: Math.abs(x) }) * 0.44;
 
   const cragNoise = ridgedMultifractal2d({ x: x * 0.045, z: z * 0.045, octaves: 4 });
-  const strataStep = Math.sin(x * 0.12 + z * 0.08 + cragNoise * 2.2) * 1.4;
+  const strataStep = Math.sin(x * 0.12 + z * 0.08 + cragNoise * 2.2) * 1.35;
 
+  const crestYAtX = computeWaterfallCrestHeight(x);
   const plateauBase =
-    (SCENE_CONFIG.crestHeight + 1.8 + cragNoise * 9.5) * lateralSlopeDown - upperGorgeNotch * 3.6;
+    (SCENE_CONFIG.crestHeight + 2.4 + cragNoise * 9.5) * lateralSlopeDown - upperGorgeNotch * 4.2;
+  const blendedPlateau =
+    plateauBase * (1 - upperGorgeNotch * 0.72) + (crestYAtX - 0.55) * (upperGorgeNotch * 0.72);
 
-  const escarpmentHeight = escarpmentTransition * Math.max(0, plateauBase + strataStep);
+  const escarpmentHeight =
+    escarpmentTransition * Math.max(0, blendedPlateau + strataStep * (1 - upperGorgeNotch * 0.7));
+
+  const midCliffShelfMask =
+    Math.exp(-Math.pow((x + 3.6) / 2.2, 2)) *
+    Math.exp(-Math.pow((z - (cliffLineZ + 2.4)) / 1.9, 2));
+  const midCliffShelf = midCliffShelfMask * 11.2;
 
   const talusDistance = z - cliffLineZ;
-  const outsideWaterfallMask = smoothstep({ edge0: 5.5, edge1: 12.0, value: Math.abs(x) });
+  const outsideWaterfallMask = smoothstep({ edge0: 6.2, edge1: 13.0, value: Math.abs(x) });
   const talusScree =
     outsideWaterfallMask *
-    smoothstep({ edge0: -1.5, edge1: 2.5, value: talusDistance }) *
-    (1 - smoothstep({ edge0: 2.5, edge1: 14.5, value: talusDistance })) *
-    (5.2 + cragNoise * 3.6);
+    smoothstep({ edge0: -1.0, edge1: 3.0, value: talusDistance }) *
+    (1 - smoothstep({ edge0: 3.0, edge1: 15.0, value: talusDistance })) *
+    (5.0 + cragNoise * 3.4);
 
-  const distToPlunge = Math.hypot(x * 0.85, z - (SCENE_CONFIG.plungeCenterZ + 3.2));
+  const distToPlunge = Math.hypot(x * 0.85, z - (SCENE_CONFIG.plungeCenterZ + 3.4));
   const plungePoolDepth = -3.4 * (1 - smoothstep({ edge0: 5.5, edge1: 15.5, value: distToPlunge }));
 
   const riverCenterX = computeRiverCenterX(z);
@@ -271,7 +294,7 @@ export function computeOpenVolcanicTerrainHeight(input: TerrainHeightInput): num
     smoothstep({ edge0: 14, edge1: 95, value: z }) * 9.5;
   const distToRiver = Math.abs(x - riverCenterX);
   const riverMask =
-    smoothstep({ edge0: cliffLineZ + 0.5, edge1: cliffLineZ + 7.0, value: z }) *
+    smoothstep({ edge0: cliffLineZ + 0.5, edge1: cliffLineZ + 6.5, value: z }) *
     (1 -
       smoothstep({
         edge0: riverHalfWidth * 0.58,
@@ -308,7 +331,7 @@ export function computeOpenVolcanicTerrainHeight(input: TerrainHeightInput): num
   const rockDetail = (valueNoise2d({ x: x * 0.28, z: z * 0.28 }) - 0.5) * 0.65;
 
   const waterDepression = Math.min(plungePoolDepth, riverBedDepth) * (1 - escarpmentTransition);
-  const valleyElevation = waterDepression + bankRise + farRollingHills + talusScree;
+  const valleyElevation = waterDepression + bankRise + farRollingHills + talusScree + midCliffShelf;
 
   return valleyElevation + escarpmentHeight + distantMountains + rockDetail;
 }
@@ -326,33 +349,41 @@ export function generateBasaltColumnLayout(options: ColumnLayoutOptions): Basalt
     const maxQ = Math.ceil(options.halfSpanX / spacingX);
 
     for (let q = minQ; q <= maxQ; q++) {
-      const x = q * spacingX + rowOffsetX;
+      const jitterX = (nextRand() - 0.5) * 0.36;
+      const jitterZ = (nextRand() - 0.5) * 0.42;
+      const x = q * spacingX + rowOffsetX + jitterX;
       const absX = Math.abs(x);
 
+      const clusterBreak = valueNoise2d({ x: x * 0.14 + 2.3, z: row * 0.85 });
+      if (row === 0 && absX > 7.5 && clusterBreak < 0.26) {
+        continue;
+      }
+
       const cliffZ = computeEscarpmentLineZ(x);
-      const z = cliffZ - row * spacingZ + 0.8;
+      const z = cliffZ - row * spacingZ + 0.5 + jitterZ;
 
       if (z > -8.5) {
         continue;
       }
 
-      const isBehindWaterfall = absX < 5.1;
+      const isBehindWaterfall = absX < 5.6;
       if (isBehindWaterfall && row === 0) {
         continue;
       }
 
+      const clusterHeightBias = valueNoise2d({ x: x * 0.09 - 4.1, z: row * 0.6 });
       const distanceFade =
-        1 - smoothstep({ edge0: 16, edge1: options.halfSpanX, value: absX }) * 0.52;
+        1 - smoothstep({ edge0: 15, edge1: options.halfSpanX, value: absX }) * 0.55;
       const steppedTier =
         row === 0
-          ? 0.58 + nextRand() * 0.36
+          ? 0.42 + clusterHeightBias * 0.52 + nextRand() * 0.24
           : row === 1
-            ? 0.78 + nextRand() * 0.3
-            : 0.96 + nextRand() * 0.26;
+            ? 0.68 + clusterHeightBias * 0.38 + nextRand() * 0.24
+            : 0.88 + clusterHeightBias * 0.28 + nextRand() * 0.24;
 
-      let topY = (SCENE_CONFIG.crestHeight + 1.5) * distanceFade * steppedTier;
+      let topY = (SCENE_CONFIG.crestHeight + 1.8) * distanceFade * steppedTier;
       if (isBehindWaterfall) {
-        topY = Math.min(topY, SCENE_CONFIG.crestHeight - 0.5 - nextRand() * 1.8);
+        topY = Math.min(topY, computeWaterfallCrestHeight(x) - 0.8 - nextRand() * 3.5);
       }
 
       const baseY = -3.0;
@@ -362,11 +393,11 @@ export function generateBasaltColumnLayout(options: ColumnLayoutOptions): Basalt
         x,
         y: baseY + height * 0.5,
         z,
-        radius: options.hexRadius * (0.97 + nextRand() * 0.08),
+        radius: options.hexRadius * (0.76 + nextRand() * 0.42),
         height,
-        rotationY: 0,
-        tiltX: (nextRand() - 0.5) * 0.015,
-        tiltZ: (nextRand() - 0.5) * 0.015,
+        rotationY: (nextRand() - 0.5) * 0.35,
+        tiltX: (nextRand() - 0.5) * 0.045,
+        tiltZ: (nextRand() - 0.5) * 0.045,
         isHanging: false,
       });
     }

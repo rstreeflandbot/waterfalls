@@ -8,6 +8,7 @@ import {
   computeParabolicFallPoint,
   computeRiverCenterX,
   computeRockWetness,
+  computeWaterfallCrestHeight,
   createSeededRandom,
   generateBasaltColumnLayout,
   normalizeVec3,
@@ -114,7 +115,7 @@ describe('cliffMath', () => {
     expect(dryHighCliff).toBe(0);
   });
 
-  it('creates an open valley with a recessed cavern behind the waterfall', () => {
+  it('creates an open valley with solid cliff backing behind the waterfall lip', () => {
     const behindFalls = computeOpenVolcanicTerrainHeight({ x: 14, z: -26 });
     const plungePool = computeOpenVolcanicTerrainHeight({
       x: 0,
@@ -130,7 +131,8 @@ describe('cliffMath', () => {
     expect(plungePool).toBeLessThan(0);
     expect(riverMid).toBeLessThan(0);
     expect(openValleyShore).toBeLessThan(6);
-    expect(computeEscarpmentLineZ(0)).toBeLessThan(SCENE_CONFIG.crestZ - 4);
+    expect(computeEscarpmentLineZ(0)).toBeGreaterThan(SCENE_CONFIG.crestZ - 3.5);
+    expect(computeWaterfallCrestHeight(-4.4)).toBeLessThan(computeWaterfallCrestHeight(3.6));
   });
 
   it('packs grounded basalt columns tightly along the back escarpment', () => {

@@ -165,18 +165,20 @@ void main() {
   vec3 foamNormal = normalize(baseNormal + tangentRight * slopeX + tangentDown * slopeY);
 
   float edgeDist = min(vUv.x, 1.0 - vUv.x);
-  float edgeSignal = edgeDist + (field.a - 0.48) * 0.19 + (field.g - 0.5) * 0.09;
+  float asymmetricBreak = texture2D(uNoiseTex, vec2(vUv.x * 1.9 + uPhaseOffset * 0.31, tau * 1.6 - uTime * uSpeed * 0.24)).a;
+  float edgeSignal = edgeDist + (field.a - 0.48) * 0.24 + (asymmetricBreak - 0.5) * 0.16 + (field.g - 0.5) * 0.10;
   float edgeWidth = max(fwidth(edgeSignal) * 1.4, 0.025);
-  float raggedEdge = smoothstep(0.035 - edgeWidth, 0.145 + edgeWidth, edgeSignal);
+  float raggedEdge = smoothstep(0.04 - edgeWidth, 0.17 + edgeWidth, edgeSignal);
 
   float topFeather = smoothstep(0.0, 0.05, fallProgress);
   float bottomPlunge = smoothstep(0.78, 1.0, fallProgress);
 
-  float aeration = smoothstep(0.04, 0.42, fallProgress + (field.r - 0.4) * 0.25);
+  float chuteVariability = 0.52 + 0.68 * vChuteMask * (0.72 + 0.56 * asymmetricBreak);
+  float aeration = smoothstep(0.04, 0.44, fallProgress + (field.r - 0.42) * 0.30 + (asymmetricBreak - 0.5) * 0.18);
   float plumeDensity = clamp(
-    (field.r * 0.58 + field.g * 0.48 + field.b * 0.24) * (0.58 + 0.54 * vChuteMask),
+    (field.r * 0.58 + field.g * 0.48 + field.b * 0.26) * chuteVariability,
     0.0,
-    1.25
+    1.3
   );
 
   float strandSharp = max(fwidth(plumeDensity) * 1.35, 0.04);

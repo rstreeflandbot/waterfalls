@@ -5,6 +5,7 @@ import {
   computeEscarpmentLineZ,
   computeOpenVolcanicTerrainHeight,
   computeRiverCenterX,
+  computeWaterfallCrestHeight,
   createSeededRandom,
   generateBasaltColumnLayout,
   smoothstep,
@@ -599,6 +600,14 @@ function normalizeRockGeometry(rawGeometry: THREE.BufferGeometry): THREE.BufferG
   return cloned;
 }
 
+function computeTerrainSlope(coords: { readonly x: number; readonly z: number }): number {
+  const eps = 0.65;
+  const hC = computeOpenVolcanicTerrainHeight(coords);
+  const hR = computeOpenVolcanicTerrainHeight({ x: coords.x + eps, z: coords.z });
+  const hF = computeOpenVolcanicTerrainHeight({ x: coords.x, z: coords.z + eps });
+  return Math.hypot((hR - hC) / eps, (hF - hC) / eps);
+}
+
 function buildRockPlacements(): {
   readonly heroBoulders: RockPlacement[];
   readonly mediumRocks: RockPlacement[];
@@ -606,97 +615,107 @@ function buildRockPlacements(): {
 } {
   const rand = createSeededRandom(55123);
 
-  const heroBoulders: RockPlacement[] = [
-    {
-      x: -3.2,
-      y: SCENE_CONFIG.crestHeight - 0.55,
-      z: SCENE_CONFIG.crestZ - 0.35,
-      sx: 1.5,
-      sy: 1.1,
-      sz: 1.35,
-      rx: 0.1,
-      ry: 0.6,
-      rz: -0.08,
-    },
-    {
-      x: 0.4,
-      y: SCENE_CONFIG.crestHeight - 0.65,
-      z: SCENE_CONFIG.crestZ - 0.55,
-      sx: 1.35,
-      sy: 0.95,
-      sz: 1.25,
-      rx: -0.05,
-      ry: 2.1,
-      rz: 0.1,
-    },
-    {
-      x: 3.6,
-      y: SCENE_CONFIG.crestHeight - 0.5,
-      z: SCENE_CONFIG.crestZ - 0.3,
-      sx: 1.55,
-      sy: 1.15,
-      sz: 1.4,
-      rx: 0.08,
-      ry: 4.1,
-      rz: -0.06,
-    },
-    {
-      x: -5.4,
-      y: SCENE_CONFIG.crestHeight - 0.25,
-      z: SCENE_CONFIG.crestZ - 0.6,
-      sx: 2.1,
-      sy: 1.6,
-      sz: 1.9,
-      rx: 0.05,
-      ry: 1.2,
-      rz: 0.04,
-    },
-    {
-      x: 5.5,
-      y: SCENE_CONFIG.crestHeight - 0.2,
-      z: SCENE_CONFIG.crestZ - 0.55,
-      sx: 2.2,
-      sy: 1.7,
-      sz: 2.0,
-      rx: -0.06,
-      ry: 3.4,
-      rz: -0.05,
-    },
-    { x: 7.4, y: -0.25, z: 12.6, sx: 2.2, sy: 1.35, sz: 1.85, rx: 0.05, ry: 1.1, rz: -0.08 },
-    { x: -8.6, y: 0.1, z: 10.2, sx: 2.5, sy: 1.5, sz: 2.1, rx: -0.06, ry: 2.4, rz: 0.05 },
-    { x: 10.2, y: 0.55, z: 4.5, sx: 2.9, sy: 1.95, sz: 2.4, rx: 0.04, ry: 0.4, rz: -0.04 },
-    { x: -10.8, y: 0.75, z: 3.4, sx: 3.1, sy: 2.1, sz: 2.5, rx: -0.05, ry: 3.9, rz: 0.06 },
-    { x: 9.4, y: -0.15, z: 18.8, sx: 1.75, sy: 1.05, sz: 1.5, rx: 0.08, ry: 5.1, rz: -0.05 },
-    { x: 4.8, y: -0.45, z: 15.2, sx: 1.3, sy: 0.78, sz: 1.15, rx: 0.03, ry: 2.8, rz: 0.04 },
+  const crestRockXs = [-5.4, -3.5, -1.9, 1.3, 3.4, 5.5];
+  const heroBoulders: RockPlacement[] = [];
+
+  for (let i = 0; i < crestRockXs.length; i++) {
+    const rx = crestRockXs[i] ?? 0;
+    const isFlank = Math.abs(rx) > 4.5;
+    const lipZ = computeEscarpmentLineZ(rx) + (isFlank ? 0.1 : -0.15);
+    const lipY = computeWaterfallCrestHeight(rx) - (isFlank ? 0.4 : 0.72);
+    const baseS = isFlank ? 2.25 : 1.15 + (i % 3) * 0.28;
+    heroBoulders.push({
+      x: rx,
+      y: lipY,
+      z: lipZ,
+      sx: baseS * (1.0 + rand() * 0.28),
+      sy: baseS * (0.72 + rand() * 0.25),
+      sz: baseS * (1.05 + rand() * 0.35),
+      rx: (rand() - 0.5) * 0.2,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.2,
+    });
+  }
+
+  const backingLedges = [
+    { x: -3.6, y: 10.6, zOffset: 1.35, sx: 2.8, sy: 2.2, sz: 2.9 },
+    { x: -1.4, y: 15.8, zOffset: 0.45, sx: 2.9, sy: 2.5, sz: 3.1 },
+    { x: 1.9, y: 13.4, zOffset: 0.35, sx: 3.1, sy: 2.4, sz: 3.0 },
+    { x: 4.1, y: 8.8, zOffset: 0.9, sx: 2.7, sy: 2.3, sz: 2.8 },
+    { x: -4.4, y: 5.2, zOffset: 1.6, sx: 2.9, sy: 2.4, sz: 2.8 },
+    { x: 0.2, y: 18.4, zOffset: -0.1, sx: 3.3, sy: 2.2, sz: 3.2 },
   ];
+
+  for (const ledge of backingLedges) {
+    heroBoulders.push({
+      x: ledge.x,
+      y: ledge.y,
+      z: computeEscarpmentLineZ(ledge.x) + ledge.zOffset,
+      sx: ledge.sx,
+      sy: ledge.sy,
+      sz: ledge.sz,
+      rx: (rand() - 0.5) * 0.25,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.25,
+    });
+  }
+
+  const foregroundAnchors = [
+    { x: 7.6, z: 12.6, sx: 2.1, sy: 1.25, sz: 1.8 },
+    { x: -8.6, z: 10.4, sx: 2.4, sy: 1.4, sz: 2.0 },
+    { x: 10.4, z: 5.2, sx: 2.8, sy: 1.75, sz: 2.3 },
+    { x: -11.2, z: 4.4, sx: 3.0, sy: 1.85, sz: 2.4 },
+    { x: 9.4, z: 18.8, sx: 1.7, sy: 1.0, sz: 1.45 },
+    { x: 4.8, z: 15.2, sx: 1.25, sy: 0.72, sz: 1.1 },
+  ];
+
+  for (const anchor of foregroundAnchors) {
+    const gy = computeOpenVolcanicTerrainHeight({ x: anchor.x, z: anchor.z });
+    heroBoulders.push({
+      x: anchor.x,
+      y: gy - anchor.sy * 0.28,
+      z: anchor.z,
+      sx: anchor.sx,
+      sy: anchor.sy,
+      sz: anchor.sz,
+      rx: (rand() - 0.5) * 0.16,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.16,
+    });
+  }
 
   const mediumRocks: RockPlacement[] = [];
   const screeRocks: RockPlacement[] = [];
 
-  for (let i = 0; i < 65; i++) {
+  for (let i = 0; i < 120 && mediumRocks.length < 56; i++) {
     const side = i % 2 === 0 ? -1 : 1;
-    const x = side * (6.2 + rand() * 24.0);
+    const x = side * (7.2 + rand() * 24.0);
     const cliffZ = computeEscarpmentLineZ(x);
-    const z = cliffZ + 1.5 + rand() * 11.5;
+    const z = cliffZ + 4.8 + rand() * 14.0;
+    const slope = computeTerrainSlope({ x, z });
+    if (slope > 0.72) {
+      continue;
+    }
+
     const groundY = computeOpenVolcanicTerrainHeight({ x, z });
-    const s = 0.85 + Math.pow(rand(), 1.4) * 2.4;
+    const s = 0.8 + Math.pow(rand(), 1.45) * 2.15;
 
     mediumRocks.push({
       x,
-      y: groundY - s * 0.18,
+      y: groundY - s * (0.34 + slope * 0.42),
       z,
       sx: s * (0.9 + rand() * 0.45),
-      sy: s * (0.65 + rand() * 0.4),
+      sy: s * (0.58 + rand() * 0.36),
       sz: s * (0.9 + rand() * 0.45),
-      rx: (rand() - 0.5) * 0.5,
+      rx: (rand() - 0.5) * 0.35,
       ry: rand() * Math.PI * 2,
-      rz: (rand() - 0.5) * 0.5,
+      rz: (rand() - 0.5) * 0.35,
     });
   }
 
-  for (let i = 0; i < 110; i++) {
+  for (let i = 0; i < 160 && screeRocks.length < 105; i++) {
     const side = i % 2 === 0 ? -1 : 1;
-    const z = -9.5 + rand() * 48.0;
+    const z = -6.5 + rand() * 48.0;
     const riverCenter = computeRiverCenterX(z);
     const riverHalfWidth =
       7.8 +
@@ -705,22 +724,27 @@ function buildRockPlacements(): {
 
     const bankOffset = (rand() - 0.22) * 22.0;
     const x = riverCenter + side * (riverHalfWidth + bankOffset);
-    if (z < computeEscarpmentLineZ(x) + 2.5) {
+    if (z < computeEscarpmentLineZ(x) + 5.0) {
+      continue;
+    }
+
+    const slope = computeTerrainSlope({ x, z });
+    if (slope > 0.7) {
       continue;
     }
 
     const groundY = computeOpenVolcanicTerrainHeight({ x, z });
-    const s = 0.32 + Math.pow(rand(), 1.8) * 1.45;
+    const s = 0.32 + Math.pow(rand(), 1.8) * 1.4;
     screeRocks.push({
       x,
-      y: groundY - s * 0.12,
+      y: groundY - s * (0.28 + slope * 0.35),
       z,
       sx: s * (0.9 + rand() * 0.5),
-      sy: s * (0.52 + rand() * 0.35),
+      sy: s * (0.48 + rand() * 0.34),
       sz: s * (0.9 + rand() * 0.5),
-      rx: (rand() - 0.5) * 0.7,
+      rx: (rand() - 0.5) * 0.45,
       ry: rand() * Math.PI * 2,
-      rz: (rand() - 0.5) * 0.7,
+      rz: (rand() - 0.5) * 0.45,
     });
   }
 
