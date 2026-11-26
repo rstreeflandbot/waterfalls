@@ -4,6 +4,66 @@ export interface WaterfallAudioController {
   readonly dispose: () => void;
 }
 
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
+function setPlaybackAudioSession(): void {
+  if (!('audioSession' in navigator)) {
+    return;
+  }
+  const candidate = Reflect.get(navigator, 'audioSession');
+  if (candidate && typeof candidate === 'object' && 'type' in candidate) {
+    try {
+      Reflect.set(candidate, 'type', 'playback');
+    } catch {
+      return;
+    }
+  }
+}
+
+function createAudioContextInstance(): AudioContext {
+  if (typeof window.AudioContext !== 'undefined') {
+    return new window.AudioContext();
+  }
+  if (window.webkitAudioContext) {
+    return new window.webkitAudioContext();
+  }
+  throw new Error('Web Audio API is unavailable');
+}
+
+function createSilentWavObjectUrl(): string {
+  const sampleRate = 8000;
+  const sampleCount = 800;
+  const dataSize = sampleCount * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) {
+      view.setUint8(offset + i, text.charCodeAt(i));
+    }
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+}
+
 function createNoiseBuffer(options: {
   readonly context: AudioContext;
   readonly durationSeconds: number;
@@ -54,17 +114,29 @@ function createNoiseBuffer(options: {
 export function createWaterfallAudio(): WaterfallAudioController {
   let audioContext: AudioContext | null = null;
   let masterGain: GainNode | null = null;
+  let silentUnlockUrl: string | null = null;
+  let silentUnlockAudio: HTMLAudioElement | null = null;
   let playing = false;
   let activeNodes: AudioNode[] = [];
   let activeSources: AudioScheduledSourceNode[] = [];
 
-  const initializeGraph = () => {
-    if (audioContext) {
+  const ensureSilentUnlockAudio = (): HTMLAudioElement => {
+    if (!silentUnlockAudio) {
+      silentUnlockUrl = createSilentWavObjectUrl();
+      const element = new Audio(silentUnlockUrl);
+      element.loop = true;
+      element.preload = 'auto';
+      element.setAttribute('playsinline', '');
+      element.setAttribute('webkit-playsinline', '');
+      silentUnlockAudio = element;
+    }
+    return silentUnlockAudio;
+  };
+
+  const initializeGraph = (context: AudioContext) => {
+    if (masterGain) {
       return;
     }
-
-    const context = new AudioContext();
-    audioContext = context;
 
     const master = context.createGain();
     master.gain.setValueAtTime(0.0001, context.currentTime);
@@ -73,17 +145,17 @@ export function createWaterfallAudio(): WaterfallAudioController {
 
     const rumbleBuffer = createNoiseBuffer({
       context,
-      durationSeconds: 6,
+      durationSeconds: 4.5,
       flavor: 'brown',
     });
     const torrentBuffer = createNoiseBuffer({
       context,
-      durationSeconds: 7,
+      durationSeconds: 5.0,
       flavor: 'pink',
     });
     const mistBuffer = createNoiseBuffer({
       context,
-      durationSeconds: 5,
+      durationSeconds: 4.0,
       flavor: 'white',
     });
 
@@ -186,25 +258,45 @@ export function createWaterfallAudio(): WaterfallAudioController {
   return {
     isPlaying: () => playing,
     toggle: async () => {
-      initializeGraph();
-      if (!audioContext || !masterGain) {
+      const targetPlaying = !playing;
+
+      if (targetPlaying) {
+        setPlaybackAudioSession();
+        const unlockElement = ensureSilentUnlockAudio();
+        void unlockElement.play().catch(() => undefined);
+      }
+
+      if (!audioContext) {
+        audioContext = createAudioContextInstance();
+      }
+
+      const resumePromise =
+        audioContext.state !== 'running' ? audioContext.resume() : Promise.resolve();
+
+      initializeGraph(audioContext);
+
+      try {
+        await resumePromise;
+      } catch {
+        silentUnlockAudio?.pause();
+        playing = false;
         return false;
       }
 
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
+      if (!masterGain) {
+        return false;
       }
 
       const now = audioContext.currentTime;
       masterGain.gain.cancelScheduledValues(now);
-      masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
 
-      if (playing) {
-        masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
-        playing = false;
-      } else {
-        masterGain.gain.exponentialRampToValueAtTime(0.46, now + 1.15);
+      if (targetPlaying) {
+        masterGain.gain.setTargetAtTime(0.46, now, 0.35);
         playing = true;
+      } else {
+        masterGain.gain.setTargetAtTime(0.0001, now, 0.22);
+        silentUnlockAudio?.pause();
+        playing = false;
       }
 
       return playing;
@@ -224,6 +316,15 @@ export function createWaterfallAudio(): WaterfallAudioController {
       }
       activeSources = [];
       activeNodes = [];
+      if (silentUnlockAudio) {
+        silentUnlockAudio.pause();
+        silentUnlockAudio.src = '';
+        silentUnlockAudio = null;
+      }
+      if (silentUnlockUrl) {
+        URL.revokeObjectURL(silentUnlockUrl);
+        silentUnlockUrl = null;
+      }
       if (audioContext) {
         void audioContext.close();
         audioContext = null;
