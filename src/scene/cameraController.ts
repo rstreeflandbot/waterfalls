@@ -12,8 +12,8 @@ export interface CameraController {
   readonly dispose: () => void;
 }
 
-const HERO_CAMERA_POSITION = new THREE.Vector3(14.5, 6.2, 22.5);
-const HERO_CAMERA_TARGET = new THREE.Vector3(0.0, 9.8, -11.5);
+const HERO_CAMERA_POSITION = new THREE.Vector3(12.8, 3.1, 22.8);
+const HERO_CAMERA_TARGET = new THREE.Vector3(-0.3, 11.2, -12.4);
 
 export function createCameraController(options: {
   readonly camera: THREE.PerspectiveCamera;
@@ -26,14 +26,14 @@ export function createCameraController(options: {
   controls.enableDamping = true;
   controls.dampingFactor = 0.045;
   controls.enablePan = false;
-  controls.rotateSpeed = 0.58;
+  controls.rotateSpeed = 0.56;
   controls.zoomSpeed = 0.78;
   controls.minDistance = 14.0;
   controls.maxDistance = 64.0;
   controls.minPolarAngle = Math.PI * 0.14;
-  controls.maxPolarAngle = Math.PI * 0.49;
-  controls.minAzimuthAngle = -Math.PI * 0.78;
-  controls.maxAzimuthAngle = Math.PI * 0.78;
+  controls.maxPolarAngle = Math.PI * 0.52;
+  controls.minAzimuthAngle = -Math.PI * 0.76;
+  controls.maxAzimuthAngle = Math.PI * 0.76;
   controls.update();
 
   let driftEnabled = true;
@@ -77,8 +77,8 @@ export function createCameraController(options: {
           offsetVec.copy(options.camera.position).sub(controls.target);
           sphericalOffset.setFromVector3(offsetVec);
 
-          const azimuthVelocity = Math.cos(elapsedSeconds * 0.11) * 0.028 * driftBlend;
-          const polarVelocity = Math.sin(elapsedSeconds * 0.16) * 0.007 * driftBlend;
+          const azimuthVelocity = Math.cos(elapsedSeconds * 0.11) * 0.026 * driftBlend;
+          const polarVelocity = Math.sin(elapsedSeconds * 0.16) * 0.006 * driftBlend;
 
           sphericalOffset.theta = THREE.MathUtils.clamp(
             sphericalOffset.theta + azimuthVelocity * clampedDelta,
@@ -96,8 +96,8 @@ export function createCameraController(options: {
         }
       }
 
-      if (options.camera.position.y < 2.1) {
-        options.camera.position.y = 2.1;
+      if (options.camera.position.y < 1.9) {
+        options.camera.position.y = 1.9;
       }
 
       controls.update();

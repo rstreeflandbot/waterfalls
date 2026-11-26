@@ -1,3 +1,5 @@
+import { SHARED_ATMOS_AND_SHADOW_GLSL } from './sharedShaderGlsl';
+
 export const MIST_BILLBOARD_VERTEX_SHADER = /* glsl */ `
 attribute vec3 aOrigin;
 attribute vec4 aParams;
@@ -23,11 +25,11 @@ void main() {
 
   float easeOut = 1.0 - pow(1.0 - age, 2.2);
   vec3 centerPos = aOrigin;
-  centerPos.x += aDrift.x * easeOut + sin(uTime * 0.42 + seed * 12.0) * 1.1 * age;
-  centerPos.y += aDrift.y * easeOut + age * age * 1.1;
+  centerPos.x += aDrift.x * easeOut + sin(uTime * 0.42 + seed * 12.0) * 1.05 * age;
+  centerPos.y += aDrift.y * easeOut + age * age * 0.9;
   centerPos.z += aDrift.z * easeOut + cos(uTime * 0.35 + seed * 9.0) * 0.65 * age;
 
-  float scale = baseScale * (0.45 + easeOut * 1.35);
+  float scale = baseScale * (0.48 + easeOut * 1.4);
   float angle = seed * 6.28318 + uTime * spinSpeed;
   float cosA = cos(angle);
   float sinA = sin(angle);
@@ -50,13 +52,32 @@ uniform float uTime;
 uniform vec3 uSunDirection;
 uniform float uOpacityScale;
 uniform sampler2D uNoiseTex;
+uniform sampler2D tSceneDepth;
+uniform vec2 uResolution;
+uniform float uCameraNear;
+uniform float uCameraFar;
+uniform sampler2D uSunShadowMap;
+uniform mat4 uSunShadowMatrix;
+uniform float uShadowMapSize;
 
 varying vec2 vUv;
 varying float vAge;
 varying float vSeed;
 varying vec3 vWorldPos;
 
+${SHARED_ATMOS_AND_SHADOW_GLSL}
+
 void main() {
+  vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
+  float rawSceneDepth = texture2D(tSceneDepth, screenUv).r;
+  if (gl_FragCoord.z > rawSceneDepth) {
+    discard;
+  }
+
+  float sceneZ = linearizeDepth(rawSceneDepth, uCameraNear, uCameraFar);
+  float fragZ = linearizeDepth(gl_FragCoord.z, uCameraNear, uCameraFar);
+  float softDepth = smoothstep(0.0, 2.4, sceneZ - fragZ);
+
   vec2 centered = (vUv - 0.5) * 2.0;
   float radial = length(centered);
   if (radial > 1.0) {
@@ -64,106 +85,149 @@ void main() {
   }
 
   float softCircle = pow(1.0 - radial, 2.1);
-  vec2 noiseCoord = vUv * 0.72 + vec2(vSeed * 3.7, -uTime * 0.024 + vSeed * 1.9);
+  vec2 noiseCoord = vUv * 0.74 + vec2(vSeed * 3.7, -uTime * 0.025 + vSeed * 1.9);
   vec4 sampleA = texture2D(uNoiseTex, noiseCoord);
   vec4 sampleB = texture2D(uNoiseTex, noiseCoord * 1.75 + vec2(0.42, -uTime * 0.038));
-  float cloudShape = softCircle * smoothstep(0.24, 0.86, sampleA.a * 0.64 + sampleB.r * 0.38);
+  float cloudShape = softCircle * smoothstep(0.22, 0.84, sampleA.a * 0.64 + sampleB.r * 0.38);
 
-  float lifeFade = smoothstep(0.0, 0.16, vAge) * (1.0 - smoothstep(0.42, 1.0, vAge));
-  float groundFade = smoothstep(-0.25, 0.75, vWorldPos.y);
-  float alpha = cloudShape * lifeFade * groundFade * uOpacityScale;
+  float lifeFade = smoothstep(0.0, 0.16, vAge) * (1.0 - smoothstep(0.40, 1.0, vAge));
+  float camDist = length(cameraPosition - vWorldPos);
+  float nearCamFade = smoothstep(4.5, 11.5, camDist);
 
-  if (alpha < 0.004) {
+  float alpha = cloudShape * lifeFade * softDepth * nearCamFade * uOpacityScale;
+  if (alpha < 0.003) {
     discard;
   }
 
   vec3 viewDir = normalize(vWorldPos - cameraPosition);
   vec3 sunDir = normalize(uSunDirection);
-  float forwardScatter = pow(max(dot(viewDir, sunDir), 0.0), 3.4);
-  float sideScatter = clamp(dot(normalize(vec3(vWorldPos.x, vWorldPos.y + 4.0, vWorldPos.z)), sunDir) * 0.5 + 0.5, 0.0, 1.0);
 
-  vec3 coolMist = vec3(0.46, 0.54, 0.62);
-  vec3 sunlitMist = vec3(0.92, 0.74, 0.56);
-  vec3 goldenRim = vec3(1.12, 0.78, 0.48);
+  float sunShadow = sampleSunShadowPcf(
+    vWorldPos,
+    vec3(0.0, 1.0, 0.0),
+    sunDir,
+    uSunShadowMap,
+    uSunShadowMatrix,
+    uShadowMapSize
+  );
 
-  float sunExposure = smoothstep(0.6, 8.5, vWorldPos.y) * 0.55 + 0.35;
-  vec3 color = mix(coolMist, sunlitMist, clamp((sideScatter * 0.45 + forwardScatter * 0.5) * sunExposure, 0.0, 0.78));
-  color += goldenRim * forwardScatter * 0.28 * sunExposure * (1.0 - softCircle * 0.45);
+  float cosTheta = dot(viewDir, sunDir);
+  float g = 0.62;
+  float mie = (1.0 - g * g) / (4.0 * 3.14159 * pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5));
+  float forwardScatter = clamp(mie * 0.72, 0.0, 2.2) * sunShadow;
 
-  float camDist = length(cameraPosition - vWorldPos);
-  float nearCamFade = smoothstep(5.5, 13.0, camDist);
+  vec3 shadowVapor = vec3(0.11, 0.145, 0.19);
+  vec3 sunlitVapor = vec3(0.55, 0.42, 0.29);
+  vec3 goldenMie = vec3(1.15, 0.66, 0.32);
 
-  gl_FragColor = vec4(color, alpha * nearCamFade);
+  vec3 color = mix(shadowVapor, sunlitVapor, sunShadow * 0.78);
+  color += goldenMie * forwardScatter * 0.42 * (1.0 - softCircle * 0.35);
+  color = applyLinearHeightFog(color, vWorldPos, cameraPosition, sunDir);
+
+  gl_FragColor = vec4(color, alpha);
 }
 `;
 
-export const SPRAY_DROPLET_VERTEX_SHADER = /* glsl */ `
+export const SPRAY_STREAK_VERTEX_SHADER = /* glsl */ `
+attribute vec3 aOrigin;
 attribute vec3 aVelocity;
 attribute vec3 aParams;
 
 uniform float uTime;
-uniform float uPixelRatio;
 
+varying vec2 vUv;
 varying float vAlpha;
 varying float vSparkle;
 varying vec3 vWorldPos;
 
 void main() {
+  vUv = uv;
   float duration = aParams.x;
   float seed = aParams.y;
-  float baseSize = aParams.z;
+  float baseThickness = aParams.z;
 
   float t = fract((uTime + seed * duration) / duration) * duration;
   float age = t / duration;
 
-  vec3 pos = position;
-  pos.x += aVelocity.x * t + sin(uTime * 1.1 + seed * 20.0) * 0.32 * age;
-  pos.y += aVelocity.y * t - 4.4 * t * t;
-  pos.z += aVelocity.z * t;
+  vec3 centerPos = aOrigin;
+  centerPos.x += aVelocity.x * t + sin(uTime * 1.1 + seed * 20.0) * 0.24 * age;
+  centerPos.y += aVelocity.y * t - 4.9 * t * t;
+  centerPos.z += aVelocity.z * t;
 
-  if (pos.y < -0.1) {
-    pos.y = -100.0;
+  vec3 instVelocity = vec3(
+    aVelocity.x,
+    aVelocity.y - 9.8 * t,
+    aVelocity.z
+  );
+
+  float speed = length(instVelocity);
+  vec3 velDir = speed > 0.001 ? instVelocity / speed : vec3(0.0, -1.0, 0.0);
+  vec3 toCam = normalize(cameraPosition - centerPos);
+  vec3 sideDir = normalize(cross(velDir, toCam) + vec3(0.0001, 0.0, 0.0));
+
+  float streakLen = clamp(speed * 0.055, 0.08, 0.65);
+  float streakWidth = baseThickness * 0.032;
+
+  vec3 worldPos = centerPos + sideDir * (position.x * streakWidth) + velDir * (position.y * streakLen);
+  if (centerPos.y < -0.15) {
+    worldPos = vec3(0.0, -500.0, 0.0);
   }
 
-  vec4 worldPosition = modelMatrix * vec4(pos, 1.0);
-  vWorldPos = worldPosition.xyz;
-  vec4 mvPosition = viewMatrix * worldPosition;
-
+  vWorldPos = worldPos;
   float fadeIn = smoothstep(0.0, 0.12, age);
   float fadeOut = 1.0 - smoothstep(0.55, 1.0, age);
-  vAlpha = fadeIn * fadeOut * smoothstep(-0.05, 0.35, pos.y);
-  vSparkle = pow(sin(uTime * 6.5 + seed * 47.0) * 0.5 + 0.5, 4.0);
+  vAlpha = fadeIn * fadeOut * smoothstep(-0.05, 0.25, centerPos.y);
+  vSparkle = pow(sin(uTime * 7.2 + seed * 47.0) * 0.5 + 0.5, 3.0);
 
-  float sizeAtten = (baseSize * uPixelRatio * 42.0) / max(-mvPosition.z, 1.0);
-  gl_PointSize = clamp(sizeAtten, 1.0, 10.0);
-  gl_Position = projectionMatrix * mvPosition;
+  gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
 }
 `;
 
-export const SPRAY_DROPLET_FRAGMENT_SHADER = /* glsl */ `
+export const SPRAY_STREAK_FRAGMENT_SHADER = /* glsl */ `
 uniform vec3 uSunDirection;
+uniform sampler2D tSceneDepth;
+uniform vec2 uResolution;
+uniform sampler2D uSunShadowMap;
+uniform mat4 uSunShadowMatrix;
+uniform float uShadowMapSize;
 
+varying vec2 vUv;
 varying float vAlpha;
 varying float vSparkle;
 varying vec3 vWorldPos;
 
+${SHARED_ATMOS_AND_SHADOW_GLSL}
+
 void main() {
-  vec2 centered = gl_PointCoord - 0.5;
-  float dist = length(centered);
-  if (dist > 0.5) {
+  vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
+  float rawSceneDepth = texture2D(tSceneDepth, screenUv).r;
+  if (gl_FragCoord.z > rawSceneDepth) {
     discard;
   }
 
-  float disc = pow(1.0 - dist * 2.0, 1.8);
+  vec2 centered = (vUv - 0.5) * 2.0;
+  float capsule = pow(max(0.0, 1.0 - centered.x * centered.x), 1.8) * pow(max(0.0, 1.0 - centered.y * centered.y), 1.3);
+  if (capsule < 0.02) {
+    discard;
+  }
+
   vec3 viewDir = normalize(vWorldPos - cameraPosition);
   vec3 sunDir = normalize(uSunDirection);
-  float sunCatch = pow(max(dot(viewDir, sunDir), 0.0), 2.6);
+  float sunShadow = sampleSunShadowPcf(
+    vWorldPos,
+    vec3(0.0, 1.0, 0.0),
+    sunDir,
+    uSunShadowMap,
+    uSunShadowMatrix,
+    uShadowMapSize
+  );
 
-  vec3 baseSpray = vec3(0.76, 0.84, 0.92);
-  vec3 goldGlint = vec3(1.22, 0.92, 0.64);
-  vec3 color = mix(baseSpray, goldGlint, clamp(sunCatch * 0.65 + vSparkle * 0.55, 0.0, 1.0));
+  float sunCatch = pow(max(dot(viewDir, sunDir), 0.0), 2.5) * sunShadow;
+  vec3 baseSpray = vec3(0.18, 0.23, 0.29);
+  vec3 goldGlint = vec3(1.15, 0.78, 0.44);
+  vec3 color = mix(baseSpray, goldGlint, clamp(sunCatch * 0.85 + vSparkle * 0.45 * sunShadow, 0.0, 1.0));
 
-  float alpha = disc * vAlpha * (0.34 + vSparkle * 0.38);
+  float alpha = capsule * vAlpha * (0.28 + vSparkle * 0.34);
   if (alpha < 0.01) {
     discard;
   }

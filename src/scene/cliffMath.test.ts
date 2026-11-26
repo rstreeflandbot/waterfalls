@@ -11,7 +11,9 @@ import {
   createSeededRandom,
   generateBasaltColumnLayout,
   normalizeVec3,
+  ridgedMultifractal2d,
   smoothstep,
+  warpTerrainCoordinate,
 } from './cliffMath';
 
 describe('cliffMath', () => {
@@ -88,6 +90,20 @@ describe('cliffMath', () => {
     expect(tQuarter - t0).toBeGreaterThan(tBottom - tHalf);
   });
 
+  it('warps terrain coordinates with higher resolution near the hero gorge', () => {
+    const stepNearCenter = warpTerrainCoordinate(0.05) - warpTerrainCoordinate(0.0);
+    const stepNearEdge = warpTerrainCoordinate(1.0) - warpTerrainCoordinate(0.95);
+
+    expect(stepNearCenter).toBeLessThan(stepNearEdge);
+    expect(warpTerrainCoordinate(-0.5)).toBeCloseTo(-warpTerrainCoordinate(0.5), 5);
+  });
+
+  it('evaluates bounded ridged multifractal noise', () => {
+    const val = ridgedMultifractal2d({ x: 1.4, z: -2.7, octaves: 4 });
+    expect(val).toBeGreaterThan(0);
+    expect(val).toBeLessThan(2);
+  });
+
   it('assigns maximum wetness near the pool and waterfall splash zone', () => {
     const shoreline = computeRockWetness({ x: 10, y: 0.1, z: 6 });
     const splashZone = computeRockWetness({ x: 1.5, y: 8, z: SCENE_CONFIG.plungeCenterZ });
@@ -98,8 +114,8 @@ describe('cliffMath', () => {
     expect(dryHighCliff).toBe(0);
   });
 
-  it('creates an open valley in front of the cliff escarpment', () => {
-    const behindFalls = computeOpenVolcanicTerrainHeight({ x: 12, z: -24 });
+  it('creates an open valley with a recessed cavern behind the waterfall', () => {
+    const behindFalls = computeOpenVolcanicTerrainHeight({ x: 14, z: -26 });
     const plungePool = computeOpenVolcanicTerrainHeight({
       x: 0,
       z: SCENE_CONFIG.plungeCenterZ + 3,
@@ -113,23 +129,24 @@ describe('cliffMath', () => {
     expect(behindFalls).toBeGreaterThan(18);
     expect(plungePool).toBeLessThan(0);
     expect(riverMid).toBeLessThan(0);
-    expect(openValleyShore).toBeLessThan(5);
-    expect(computeEscarpmentLineZ(0)).toBeLessThan(SCENE_CONFIG.crestZ);
+    expect(openValleyShore).toBeLessThan(6);
+    expect(computeEscarpmentLineZ(0)).toBeLessThan(SCENE_CONFIG.crestZ - 4);
   });
 
-  it('keeps all basalt columns along the back cliff without enclosing the viewer', () => {
+  it('packs grounded basalt columns tightly along the back escarpment', () => {
     const columns = generateBasaltColumnLayout({
       seed: 202611,
-      cliffClusterCount: 150,
-      ledgeOutcropCount: 56,
+      hexRadius: 0.78,
+      rowsDeep: 4,
+      halfSpanX: 30,
     });
 
-    expect(columns.length).toBeGreaterThan(120);
+    expect(columns.length).toBeGreaterThan(150);
 
-    const columnsInFrontValley = columns.filter((column) => column.z > -7.5);
+    const columnsInFrontValley = columns.filter((column) => column.z > -8.5);
     expect(columnsInFrontValley).toEqual([]);
 
-    const columnsInWaterfallChannel = columns.filter((column) => Math.abs(column.x) < 4.9);
-    expect(columnsInWaterfallChannel).toEqual([]);
+    const floatingColumns = columns.filter((column) => column.isHanging);
+    expect(floatingColumns).toEqual([]);
   });
 });

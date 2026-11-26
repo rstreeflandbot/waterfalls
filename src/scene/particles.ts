@@ -2,15 +2,26 @@ import * as THREE from 'three';
 import {
   MIST_BILLBOARD_FRAGMENT_SHADER,
   MIST_BILLBOARD_VERTEX_SHADER,
-  SPRAY_DROPLET_FRAGMENT_SHADER,
-  SPRAY_DROPLET_VERTEX_SHADER,
+  SPRAY_STREAK_FRAGMENT_SHADER,
+  SPRAY_STREAK_VERTEX_SHADER,
 } from '../shaders/particleShaders';
 import { SCENE_CONFIG, createSeededRandom } from './cliffMath';
 
 export interface ParticleSystem {
   readonly group: THREE.Group;
   readonly update: (elapsedSeconds: number) => void;
-  readonly setPixelRatio: (pixelRatio: number) => void;
+  readonly setSceneTextures: (options: {
+    readonly depthTexture: THREE.Texture;
+    readonly width: number;
+    readonly height: number;
+    readonly cameraNear: number;
+    readonly cameraFar: number;
+  }) => void;
+  readonly setShadowUniforms: (options: {
+    readonly shadowMap: THREE.Texture;
+    readonly shadowMatrix: THREE.Matrix4;
+    readonly shadowMapSize: number;
+  }) => void;
   readonly dispose: () => void;
 }
 
@@ -35,31 +46,64 @@ interface MistLayerConfig {
   readonly renderOrder: number;
 }
 
+interface MistUniforms {
+  readonly uTime: { value: number };
+  readonly uSunDirection: { value: THREE.Vector3 };
+  readonly uOpacityScale: { value: number };
+  readonly uNoiseTex: { value: THREE.Texture };
+  readonly tSceneDepth: { value: THREE.Texture };
+  readonly uResolution: { value: THREE.Vector2 };
+  readonly uCameraNear: { value: number };
+  readonly uCameraFar: { value: number };
+  readonly uSunShadowMap: { value: THREE.Texture };
+  readonly uSunShadowMatrix: { value: THREE.Matrix4 };
+  readonly uShadowMapSize: { value: number };
+}
+
+interface StreakUniforms {
+  readonly uTime: { value: number };
+  readonly uSunDirection: { value: THREE.Vector3 };
+  readonly tSceneDepth: { value: THREE.Texture };
+  readonly uResolution: { value: THREE.Vector2 };
+  readonly uSunShadowMap: { value: THREE.Texture };
+  readonly uSunShadowMatrix: { value: THREE.Matrix4 };
+  readonly uShadowMapSize: { value: number };
+}
+
+function createInstancedQuadGeometry(count: number): {
+  readonly baseQuad: THREE.PlaneGeometry;
+  readonly instanced: THREE.InstancedBufferGeometry;
+} {
+  const baseQuad = new THREE.PlaneGeometry(1, 1);
+  const instanced = new THREE.InstancedBufferGeometry();
+  const baseIndex = baseQuad.getIndex();
+  if (baseIndex) {
+    instanced.setIndex(baseIndex);
+  }
+  const basePos = baseQuad.getAttribute('position');
+  if (basePos) {
+    instanced.setAttribute('position', basePos);
+  }
+  const baseUv = baseQuad.getAttribute('uv');
+  if (baseUv) {
+    instanced.setAttribute('uv', baseUv);
+  }
+  instanced.instanceCount = count;
+  return { baseQuad, instanced };
+}
+
 function createMistLayer(options: {
   readonly config: MistLayerConfig;
   readonly sunDirection: THREE.Vector3;
   readonly noiseTexture: THREE.DataTexture;
+  readonly fallbackTexture: THREE.Texture;
 }): {
   readonly mesh: THREE.Mesh;
-  readonly timeUniform: { value: number };
+  readonly uniforms: MistUniforms;
   readonly dispose: () => void;
 } {
   const { config } = options;
-  const baseQuad = new THREE.PlaneGeometry(1, 1);
-  const instancedGeometry = new THREE.InstancedBufferGeometry();
-  const baseIndex = baseQuad.getIndex();
-  if (baseIndex) {
-    instancedGeometry.setIndex(baseIndex);
-  }
-  const basePosition = baseQuad.getAttribute('position');
-  if (basePosition) {
-    instancedGeometry.setAttribute('position', basePosition);
-  }
-  const baseUv = baseQuad.getAttribute('uv');
-  if (baseUv) {
-    instancedGeometry.setAttribute('uv', baseUv);
-  }
-  instancedGeometry.instanceCount = config.count;
+  const { baseQuad, instanced } = createInstancedQuadGeometry(config.count);
 
   const origins = new Float32Array(config.count * 3);
   const params = new Float32Array(config.count * 4);
@@ -78,147 +122,154 @@ function createMistLayer(options: {
     origins[i3 + 1] = y;
     origins[i3 + 2] = z;
 
-    const duration = config.minDuration + rand() * (config.maxDuration - config.minDuration);
-    const scale = config.minScale + rand() * (config.maxScale - config.minScale);
-    const spinSpeed = (rand() - 0.5) * 0.28;
-    const seed = rand();
-
-    params[i4] = duration;
-    params[i4 + 1] = scale;
-    params[i4 + 2] = spinSpeed;
-    params[i4 + 3] = seed;
+    params[i4] = config.minDuration + rand() * (config.maxDuration - config.minDuration);
+    params[i4 + 1] = config.minScale + rand() * (config.maxScale - config.minScale);
+    params[i4 + 2] = (rand() - 0.5) * 0.25;
+    params[i4 + 3] = rand();
 
     const outwardBias = Math.sign(x || rand() - 0.5) * (0.4 + rand() * 0.8);
-    drifts[i3] = outwardBias * config.driftSideSpread + (rand() - 0.5) * 2.2;
+    drifts[i3] = outwardBias * config.driftSideSpread + (rand() - 0.5) * 2.0;
     drifts[i3 + 1] = config.driftUpMin + rand() * (config.driftUpMax - config.driftUpMin);
     drifts[i3 + 2] =
       config.driftForwardMin + rand() * (config.driftForwardMax - config.driftForwardMin);
   }
 
-  instancedGeometry.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(origins, 3));
-  instancedGeometry.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 4));
-  instancedGeometry.setAttribute('aDrift', new THREE.InstancedBufferAttribute(drifts, 3));
+  instanced.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(origins, 3));
+  instanced.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 4));
+  instanced.setAttribute('aDrift', new THREE.InstancedBufferAttribute(drifts, 3));
 
-  const timeUniform = { value: 0 };
+  const uniforms: MistUniforms = {
+    uTime: { value: 0 },
+    uSunDirection: { value: options.sunDirection },
+    uOpacityScale: { value: config.opacityScale },
+    uNoiseTex: { value: options.noiseTexture },
+    tSceneDepth: { value: options.fallbackTexture },
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uCameraNear: { value: 0.25 },
+    uCameraFar: { value: 520 },
+    uSunShadowMap: { value: options.fallbackTexture },
+    uSunShadowMatrix: { value: new THREE.Matrix4() },
+    uShadowMapSize: { value: 1024 },
+  };
+
   const material = new THREE.ShaderMaterial({
     vertexShader: MIST_BILLBOARD_VERTEX_SHADER,
     fragmentShader: MIST_BILLBOARD_FRAGMENT_SHADER,
-    uniforms: {
-      uTime: timeUniform,
-      uSunDirection: { value: options.sunDirection },
-      uOpacityScale: { value: config.opacityScale },
-      uNoiseTex: { value: options.noiseTexture },
-    },
+    uniforms: { ...uniforms },
     transparent: true,
     depthWrite: false,
+    depthTest: false,
     blending: THREE.NormalBlending,
   });
 
-  const mesh = new THREE.Mesh(instancedGeometry, material);
+  const mesh = new THREE.Mesh(instanced, material);
   mesh.frustumCulled = false;
   mesh.renderOrder = config.renderOrder;
 
   return {
     mesh,
-    timeUniform,
+    uniforms,
     dispose: () => {
       baseQuad.dispose();
-      instancedGeometry.dispose();
+      instanced.dispose();
       material.dispose();
     },
   };
 }
 
-function createSprayDroplets(options: {
+function createSplashStreaks(options: {
   readonly count: number;
   readonly sunDirection: THREE.Vector3;
-  readonly pixelRatio: number;
+  readonly fallbackTexture: THREE.Texture;
 }): {
-  readonly points: THREE.Points;
-  readonly timeUniform: { value: number };
-  readonly pixelRatioUniform: { value: number };
+  readonly mesh: THREE.Mesh;
+  readonly uniforms: StreakUniforms;
   readonly dispose: () => void;
 } {
+  const { baseQuad, instanced } = createInstancedQuadGeometry(options.count);
   const rand = createSeededRandom(88421);
-  const positions = new Float32Array(options.count * 3);
+
+  const origins = new Float32Array(options.count * 3);
   const velocities = new Float32Array(options.count * 3);
   const params = new Float32Array(options.count * 3);
 
   for (let i = 0; i < options.count; i++) {
     const i3 = i * 3;
-    const isCurtainSpray = i < options.count * 0.3;
+    const isCurtainShed = i < options.count * 0.35;
 
-    if (isCurtainSpray) {
+    if (isCurtainShed) {
       const heightRatio = rand();
-      positions[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 0.92;
-      positions[i3 + 1] = 2.0 + heightRatio * (SCENE_CONFIG.crestHeight - 4.0);
-      positions[i3 + 2] =
-        SCENE_CONFIG.crestZ + 1.4 + (1 - heightRatio) * 3.0 + (rand() - 0.5) * 1.1;
+      origins[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 0.9;
+      origins[i3 + 1] = 2.5 + heightRatio * (SCENE_CONFIG.crestHeight - 4.0);
+      origins[i3 + 2] = SCENE_CONFIG.crestZ + 1.5 + (1 - heightRatio) * 3.1 + (rand() - 0.5) * 1.0;
 
-      velocities[i3] = (rand() - 0.5) * 2.2;
-      velocities[i3 + 1] = -0.8 - rand() * 2.0;
-      velocities[i3 + 2] = 0.8 + rand() * 2.0;
+      velocities[i3] = (rand() - 0.5) * 1.9;
+      velocities[i3 + 1] = -2.2 - rand() * 3.2;
+      velocities[i3 + 2] = 0.7 + rand() * 1.9;
 
-      params[i3] = 1.6 + rand() * 1.6;
+      params[i3] = 1.4 + rand() * 1.4;
       params[i3 + 1] = rand();
-      params[i3 + 2] = 0.65 + rand() * 1.0;
+      params[i3 + 2] = 0.6 + rand() * 0.9;
     } else {
       const angle = (rand() - 0.5) * Math.PI * 1.15;
-      const spreadX = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 1.05;
-      positions[i3] = spreadX;
-      positions[i3 + 1] = 0.25 + rand() * 1.2;
-      positions[i3 + 2] = SCENE_CONFIG.plungeCenterZ + 0.4 + (rand() - 0.5) * 2.6;
+      origins[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 1.0;
+      origins[i3 + 1] = 0.2 + rand() * 0.9;
+      origins[i3 + 2] = SCENE_CONFIG.plungeCenterZ + 0.5 + (rand() - 0.5) * 2.4;
 
-      const launchSpeed = 2.4 + rand() * 5.0;
+      const launchSpeed = 2.8 + rand() * 5.2;
       velocities[i3] = Math.sin(angle) * launchSpeed * 0.85;
-      velocities[i3 + 1] = 2.8 + rand() * 5.2;
-      velocities[i3 + 2] = Math.cos(angle) * launchSpeed * 0.92 + 0.8;
+      velocities[i3 + 1] = 3.2 + rand() * 5.6;
+      velocities[i3 + 2] = Math.cos(angle) * launchSpeed * 0.9 + 0.8;
 
-      params[i3] = 1.4 + rand() * 1.8;
+      params[i3] = 1.2 + rand() * 1.6;
       params[i3 + 1] = rand();
-      params[i3 + 2] = 0.75 + rand() * 1.3;
+      params[i3 + 2] = 0.75 + rand() * 1.1;
     }
   }
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('aVelocity', new THREE.BufferAttribute(velocities, 3));
-  geometry.setAttribute('aParams', new THREE.BufferAttribute(params, 3));
+  instanced.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(origins, 3));
+  instanced.setAttribute('aVelocity', new THREE.InstancedBufferAttribute(velocities, 3));
+  instanced.setAttribute('aParams', new THREE.InstancedBufferAttribute(params, 3));
 
-  const timeUniform = { value: 0 };
-  const pixelRatioUniform = { value: options.pixelRatio };
+  const uniforms: StreakUniforms = {
+    uTime: { value: 0 },
+    uSunDirection: { value: options.sunDirection },
+    tSceneDepth: { value: options.fallbackTexture },
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uSunShadowMap: { value: options.fallbackTexture },
+    uSunShadowMatrix: { value: new THREE.Matrix4() },
+    uShadowMapSize: { value: 1024 },
+  };
 
   const material = new THREE.ShaderMaterial({
-    vertexShader: SPRAY_DROPLET_VERTEX_SHADER,
-    fragmentShader: SPRAY_DROPLET_FRAGMENT_SHADER,
-    uniforms: {
-      uTime: timeUniform,
-      uPixelRatio: pixelRatioUniform,
-      uSunDirection: { value: options.sunDirection },
-    },
+    vertexShader: SPRAY_STREAK_VERTEX_SHADER,
+    fragmentShader: SPRAY_STREAK_FRAGMENT_SHADER,
+    uniforms: { ...uniforms },
     transparent: true,
     depthWrite: false,
+    depthTest: false,
     blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
   });
 
-  const points = new THREE.Points(geometry, material);
-  points.frustumCulled = false;
-  points.renderOrder = 8;
+  const mesh = new THREE.Mesh(instanced, material);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 8;
 
   return {
-    points,
-    timeUniform,
-    pixelRatioUniform,
+    mesh,
+    uniforms,
     dispose: () => {
-      geometry.dispose();
+      baseQuad.dispose();
+      instanced.dispose();
       material.dispose();
     },
   };
 }
 
 export function createWaterfallParticles(options: {
-  readonly initialPixelRatio: number;
   readonly noiseTexture: THREE.DataTexture;
+  readonly fallbackTexture: THREE.Texture;
   readonly reducedOverdraw: boolean;
 }): ParticleSystem {
   const group = new THREE.Group();
@@ -228,80 +279,103 @@ export function createWaterfallParticles(options: {
     SCENE_CONFIG.sunDirection.z,
   ).normalize();
 
-  const heavyBaseSpray = createMistLayer({
+  const plungeBoilMist = createMistLayer({
     sunDirection,
     noiseTexture: options.noiseTexture,
+    fallbackTexture: options.fallbackTexture,
     config: {
-      count: options.reducedOverdraw ? 42 : 64,
+      count: options.reducedOverdraw ? 42 : 68,
       seed: 10101,
-      opacityScale: 0.19,
-      minScale: 3.4,
-      maxScale: 6.4,
-      minDuration: 3.8,
-      maxDuration: 6.8,
-      spawnSpreadX: 6.4,
-      spawnMinY: 0.35,
-      spawnMaxY: 1.8,
-      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 1.2,
+      opacityScale: 0.34,
+      minScale: 2.8,
+      maxScale: 5.4,
+      minDuration: 2.8,
+      maxDuration: 5.2,
+      spawnSpreadX: 6.2,
+      spawnMinY: 0.1,
+      spawnMaxY: 1.5,
+      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 0.9,
       spawnSpreadZ: 1.8,
-      driftForwardMin: 2.2,
-      driftForwardMax: 6.8,
-      driftUpMin: 2.8,
-      driftUpMax: 7.2,
-      driftSideSpread: 4.5,
+      driftForwardMin: 1.8,
+      driftForwardMax: 5.8,
+      driftUpMin: 2.4,
+      driftUpMax: 6.4,
+      driftSideSpread: 3.8,
       renderOrder: 6,
     },
   });
 
-  const risingValleyMist = createMistLayer({
+  const risingVaporPlumes = createMistLayer({
     sunDirection,
     noiseTexture: options.noiseTexture,
+    fallbackTexture: options.fallbackTexture,
     config: {
-      count: options.reducedOverdraw ? 26 : 40,
+      count: options.reducedOverdraw ? 28 : 44,
       seed: 20202,
-      opacityScale: 0.1,
-      minScale: 6.5,
-      maxScale: 11.5,
-      minDuration: 7.5,
-      maxDuration: 13.0,
-      spawnSpreadX: 8.5,
-      spawnMinY: 1.0,
-      spawnMaxY: 4.0,
-      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 3.2,
-      spawnSpreadZ: 3.2,
-      driftForwardMin: 4.5,
-      driftForwardMax: 12.0,
+      opacityScale: 0.16,
+      minScale: 6.2,
+      maxScale: 11.2,
+      minDuration: 6.8,
+      maxDuration: 11.8,
+      spawnSpreadX: 8.2,
+      spawnMinY: 0.8,
+      spawnMaxY: 3.8,
+      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 2.8,
+      spawnSpreadZ: 3.0,
+      driftForwardMin: 3.8,
+      driftForwardMax: 10.5,
       driftUpMin: 3.2,
-      driftUpMax: 9.0,
-      driftSideSpread: 7.5,
+      driftUpMax: 8.8,
+      driftSideSpread: 6.8,
       renderOrder: 7,
     },
   });
 
-  const droplets = createSprayDroplets({
-    count: options.reducedOverdraw ? 900 : 1500,
+  const streaks = createSplashStreaks({
+    count: options.reducedOverdraw ? 650 : 1200,
     sunDirection,
-    pixelRatio: options.initialPixelRatio,
+    fallbackTexture: options.fallbackTexture,
   });
 
-  group.add(heavyBaseSpray.mesh);
-  group.add(risingValleyMist.mesh);
-  group.add(droplets.points);
+  group.add(plungeBoilMist.mesh);
+  group.add(risingVaporPlumes.mesh);
+  group.add(streaks.mesh);
+
+  const mistLayers = [plungeBoilMist, risingVaporPlumes];
 
   return {
     group,
     update: (elapsedSeconds: number) => {
-      heavyBaseSpray.timeUniform.value = elapsedSeconds;
-      risingValleyMist.timeUniform.value = elapsedSeconds;
-      droplets.timeUniform.value = elapsedSeconds;
+      for (const layer of mistLayers) {
+        layer.uniforms.uTime.value = elapsedSeconds;
+      }
+      streaks.uniforms.uTime.value = elapsedSeconds;
     },
-    setPixelRatio: (pixelRatio: number) => {
-      droplets.pixelRatioUniform.value = pixelRatio;
+    setSceneTextures: (sceneOpts) => {
+      for (const layer of mistLayers) {
+        layer.uniforms.tSceneDepth.value = sceneOpts.depthTexture;
+        layer.uniforms.uResolution.value.set(sceneOpts.width, sceneOpts.height);
+        layer.uniforms.uCameraNear.value = sceneOpts.cameraNear;
+        layer.uniforms.uCameraFar.value = sceneOpts.cameraFar;
+      }
+      streaks.uniforms.tSceneDepth.value = sceneOpts.depthTexture;
+      streaks.uniforms.uResolution.value.set(sceneOpts.width, sceneOpts.height);
+    },
+    setShadowUniforms: (shadowOpts) => {
+      for (const layer of mistLayers) {
+        layer.uniforms.uSunShadowMap.value = shadowOpts.shadowMap;
+        layer.uniforms.uSunShadowMatrix.value.copy(shadowOpts.shadowMatrix);
+        layer.uniforms.uShadowMapSize.value = shadowOpts.shadowMapSize;
+      }
+      streaks.uniforms.uSunShadowMap.value = shadowOpts.shadowMap;
+      streaks.uniforms.uSunShadowMatrix.value.copy(shadowOpts.shadowMatrix);
+      streaks.uniforms.uShadowMapSize.value = shadowOpts.shadowMapSize;
     },
     dispose: () => {
-      heavyBaseSpray.dispose();
-      risingValleyMist.dispose();
-      droplets.dispose();
+      for (const layer of mistLayers) {
+        layer.dispose();
+      }
+      streaks.dispose();
     },
   };
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   SCENE_CONFIG,
   computeEscarpmentLineZ,
@@ -7,6 +8,7 @@ import {
   createSeededRandom,
   generateBasaltColumnLayout,
   smoothstep,
+  warpTerrainCoordinate,
 } from './cliffMath';
 import { WaterfallTextureBundle } from './pbrTextures';
 
@@ -30,6 +32,18 @@ interface TerrainShaderUniforms {
   readonly uSandRma: { value: THREE.Texture };
 }
 
+interface RockPlacement {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly sx: number;
+  readonly sy: number;
+  readonly sz: number;
+  readonly rx: number;
+  readonly ry: number;
+  readonly rz: number;
+}
+
 function createTriplanarVolcanicTerrainMaterial(
   uniforms: TerrainShaderUniforms,
 ): THREE.MeshStandardMaterial {
@@ -37,7 +51,7 @@ function createTriplanarVolcanicTerrainMaterial(
     color: new THREE.Color(0xffffff),
     roughness: 0.85,
     metalness: 0.04,
-    envMapIntensity: 1.15,
+    envMapIntensity: 1.25,
   });
 
   material.onBeforeCompile = (shader) => {
@@ -123,46 +137,50 @@ function createTriplanarVolcanicTerrainMaterial(
         vec3 triWeights = pow(abs(tNorm), vec3(4.0));
         triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.0001);
 
-        float rockScale = 0.095;
-        float mossScale = 0.115;
-        float sandScale = 0.16;
+        float rockScale = 0.11;
+        float mossScale = 0.14;
+        float sandScale = 0.22;
 
-        vec3 basaltCol = sampleTriplanarColor(uBasaltAlbedo, tPos, triWeights, rockScale) * 1.42;
+        vec3 basaltRaw = sampleTriplanarColor(uBasaltAlbedo, tPos, triWeights, rockScale);
+        vec3 basaltCol = basaltRaw * vec3(0.74, 0.78, 0.85);
         vec3 basaltRma = sampleTriplanarColor(uBasaltRma, tPos, triWeights, rockScale);
-        vec3 mossCol = texture2D(uMossAlbedo, tPos.xz * mossScale).rgb;
+
+        vec3 mossCol = texture2D(uMossAlbedo, tPos.xz * mossScale).rgb * 0.92;
         vec3 mossRma = texture2D(uMossRma, tPos.xz * mossScale).rgb;
-        vec3 sandCol = texture2D(uSandAlbedo, tPos.xz * sandScale).rgb * vec3(0.46, 0.49, 0.54);
+
+        vec3 sandRaw = texture2D(uSandAlbedo, tPos.xz * sandScale).rgb;
+        float sandLuma = dot(sandRaw, vec3(0.299, 0.587, 0.114));
+        vec3 sandCol = mix(vec3(sandLuma), sandRaw, 0.22) * vec3(0.18, 0.20, 0.23);
         vec3 sandRma = texture2D(uSandRma, tPos.xz * sandScale).rgb;
 
-        float macroNoise = texture2D(uNoiseTex, tPos.xz * 0.018).r;
-        float patchNoise = texture2D(uNoiseTex, tPos.xz * 0.055 + vec2(0.31, 0.67)).a;
+        float macroNoise = texture2D(uNoiseTex, tPos.xz * 0.017).r;
+        float patchNoise = texture2D(uNoiseTex, tPos.xz * 0.052 + vec2(0.31, 0.67)).a;
 
-        float slopeUp = smoothstep(0.56, 0.84, tNorm.y);
-        float sandMask = slopeUp * (1.0 - smoothstep(0.75, 3.2, tPos.y + (macroNoise - 0.5) * 1.1));
-        float outsideWaterfall = smoothstep(5.4, 11.5, length(vec2(tPos.x * 0.72, tPos.z - uPlungeZ)));
-        float mossElevation = smoothstep(1.3, 4.2, tPos.y) * (1.0 - smoothstep(42.0, 62.0, tPos.y));
-        float rawMoss = slopeUp * mossElevation * outsideWaterfall * smoothstep(0.28, 0.68, patchNoise + (mossRma.b - basaltRma.b) * 0.32);
+        float slopeUp = smoothstep(0.55, 0.84, tNorm.y);
+        float sandMask = slopeUp * (1.0 - smoothstep(0.7, 3.1, tPos.y + (macroNoise - 0.5) * 1.1));
+        float outsideWaterfall = smoothstep(5.8, 12.2, length(vec2(tPos.x * 0.72, tPos.z - uPlungeZ)));
+        float mossElevation = smoothstep(1.2, 4.0, tPos.y) * (1.0 - smoothstep(40.0, 58.0, tPos.y));
+        float rawMossInput = slopeUp * mossElevation * outsideWaterfall * (0.45 + 0.55 * patchNoise);
+        float heightCreviceMoss = clamp((mossRma.b + rawMossInput - basaltRma.r) * 5.2, 0.0, 1.0) * smoothstep(0.18, 0.42, rawMossInput);
 
         vec3 groundAlbedo = mix(basaltCol, sandCol, sandMask);
-        groundAlbedo = mix(groundAlbedo, mossCol, rawMoss);
+        groundAlbedo = mix(groundAlbedo, mossCol, heightCreviceMoss);
 
-        float cavityAo = mix(mix(basaltRma.r, sandRma.r, sandMask), mossRma.r, rawMoss);
-        groundAlbedo *= (0.48 + 0.52 * cavityAo);
+        float cavityAo = mix(mix(basaltRma.r, sandRma.r, sandMask), mossRma.r, heightCreviceMoss);
+        groundAlbedo *= (0.46 + 0.54 * cavityAo);
+        groundAlbedo *= (0.82 + 0.34 * macroNoise);
 
-        float macroTint = 0.84 + 0.32 * macroNoise;
-        groundAlbedo *= macroTint;
-
-        float highSnowMask = smoothstep(38.0, 56.0, tPos.y + macroNoise * 8.0) * smoothstep(0.45, 0.8, tNorm.y);
-        groundAlbedo = mix(groundAlbedo, vec3(0.62, 0.66, 0.72), highSnowMask * 0.65);
+        float highSnowMask = smoothstep(38.0, 56.0, tPos.y + macroNoise * 7.5) * smoothstep(0.45, 0.8, tNorm.y);
+        groundAlbedo = mix(groundAlbedo, vec3(0.52, 0.58, 0.66), highSnowMask * 0.55);
 
         float poolWet = 1.0 - smoothstep(0.05, 2.2, tPos.y);
         float fallDist = length(vec2(tPos.x * 0.65, tPos.z - uPlungeZ));
         float sprayWet = (1.0 - smoothstep(4.5, 16.5, fallDist)) * (1.0 - smoothstep(uCrestHeight + 0.5, uCrestHeight + 3.5, tPos.y));
         float terrainWetness = clamp(max(poolWet, sprayWet * 0.94), 0.0, 1.0);
 
-        float trickle = smoothstep(0.66, 0.90, texture2D(uNoiseTex, vec2((tPos.x + tPos.z) * 0.28, tPos.y * 0.05 + uTime * 0.16)).b) * sprayWet * (1.0 - abs(tNorm.y));
-        groundAlbedo *= mix(1.0, 0.58, terrainWetness * (1.0 - rawMoss * 0.72));
-        groundAlbedo += vec3(0.035, 0.045, 0.055) * trickle;
+        float trickle = smoothstep(0.68, 0.90, texture2D(uNoiseTex, vec2((tPos.x + tPos.z) * 0.28, tPos.y * 0.05 + uTime * 0.16)).b) * sprayWet * (1.0 - abs(tNorm.y));
+        groundAlbedo *= mix(1.0, 0.52, terrainWetness * (1.0 - heightCreviceMoss * 0.72));
+        groundAlbedo += vec3(0.018, 0.024, 0.032) * trickle;
 
         diffuseColor.rgb = groundAlbedo;
         `,
@@ -176,16 +194,16 @@ function createTriplanarVolcanicTerrainMaterial(
         vec3 rTriW = pow(abs(rNorm), vec3(4.0));
         rTriW /= max(rTriW.x + rTriW.y + rTriW.z, 0.0001);
 
-        float rMacro = texture2D(uNoiseTex, rPos.xz * 0.018).r;
-        float rPatch = texture2D(uNoiseTex, rPos.xz * 0.055 + vec2(0.31, 0.67)).a;
-        float rSlope = smoothstep(0.56, 0.84, rNorm.y);
-        float rSand = rSlope * (1.0 - smoothstep(0.75, 3.2, rPos.y + (rMacro - 0.5) * 1.1));
-        float rOutside = smoothstep(5.4, 11.5, length(vec2(rPos.x * 0.72, rPos.z - uPlungeZ)));
-        float rMoss = rSlope * smoothstep(1.3, 4.2, rPos.y) * rOutside * smoothstep(0.32, 0.68, rPatch);
+        float rMacro = texture2D(uNoiseTex, rPos.xz * 0.017).r;
+        float rPatch = texture2D(uNoiseTex, rPos.xz * 0.052 + vec2(0.31, 0.67)).a;
+        float rSlope = smoothstep(0.55, 0.84, rNorm.y);
+        float rSand = rSlope * (1.0 - smoothstep(0.7, 3.1, rPos.y + (rMacro - 0.5) * 1.1));
+        float rOutside = smoothstep(5.8, 12.2, length(vec2(rPos.x * 0.72, rPos.z - uPlungeZ)));
+        float rMoss = rSlope * smoothstep(1.2, 4.0, rPos.y) * rOutside * smoothstep(0.28, 0.66, rPatch);
 
-        float basaltRough = sampleTriplanarColor(uBasaltRma, rPos, rTriW, 0.095).g;
-        float sandRough = texture2D(uSandRma, rPos.xz * 0.16).g;
-        float mossRough = texture2D(uMossRma, rPos.xz * 0.115).g;
+        float basaltRough = sampleTriplanarColor(uBasaltRma, rPos, rTriW, 0.11).g;
+        float sandRough = texture2D(uSandRma, rPos.xz * 0.22).g;
+        float mossRough = texture2D(uMossRma, rPos.xz * 0.14).g;
 
         float surfaceRough = mix(mix(basaltRough, sandRough, rSand), mossRough, rMoss);
 
@@ -194,7 +212,7 @@ function createTriplanarVolcanicTerrainMaterial(
         float rSprayWet = (1.0 - smoothstep(4.5, 16.5, rFallDist)) * (1.0 - smoothstep(uCrestHeight + 0.5, uCrestHeight + 3.5, rPos.y));
         float rWetness = clamp(max(rPoolWet, rSprayWet * 0.94), 0.0, 1.0);
 
-        roughnessFactor = mix(surfaceRough, 0.12, rWetness * (1.0 - rMoss * 0.75));
+        roughnessFactor = mix(surfaceRough, 0.11, rWetness * (1.0 - rMoss * 0.78));
         `,
       )
       .replace(
@@ -206,51 +224,49 @@ function createTriplanarVolcanicTerrainMaterial(
         vec3 nTriW = pow(abs(nNorm), vec3(4.0));
         nTriW /= max(nTriW.x + nTriW.y + nTriW.z, 0.0001);
 
-        float nMacro = texture2D(uNoiseTex, nPos.xz * 0.018).r;
-        float nPatch = texture2D(uNoiseTex, nPos.xz * 0.055 + vec2(0.31, 0.67)).a;
-        float nSlope = smoothstep(0.56, 0.84, nNorm.y);
-        float nSand = nSlope * (1.0 - smoothstep(0.75, 3.2, nPos.y + (nMacro - 0.5) * 1.1));
-        float nOutside = smoothstep(5.4, 11.5, length(vec2(nPos.x * 0.72, nPos.z - uPlungeZ)));
-        float nMoss = nSlope * smoothstep(1.3, 4.2, nPos.y) * nOutside * smoothstep(0.32, 0.68, nPatch);
+        float nMacro = texture2D(uNoiseTex, nPos.xz * 0.017).r;
+        float nPatch = texture2D(uNoiseTex, nPos.xz * 0.052 + vec2(0.31, 0.67)).a;
+        float nSlope = smoothstep(0.55, 0.84, nNorm.y);
+        float nSand = nSlope * (1.0 - smoothstep(0.7, 3.1, nPos.y + (nMacro - 0.5) * 1.1));
+        float nOutside = smoothstep(5.8, 12.2, length(vec2(nPos.x * 0.72, nPos.z - uPlungeZ)));
+        float nMoss = nSlope * smoothstep(1.2, 4.0, nPos.y) * nOutside * smoothstep(0.28, 0.66, nPatch);
 
-        vec3 basaltPerturb = sampleTriplanarNormalOffset(uBasaltNormal, nPos, nTriW, 0.095);
-        vec3 sandTn = texture2D(uSandNormal, nPos.xz * 0.16).xyz * 2.0 - 1.0;
-        vec3 mossTn = texture2D(uMossNormal, nPos.xz * 0.115).xyz * 2.0 - 1.0;
+        vec3 basaltPerturb = sampleTriplanarNormalOffset(uBasaltNormal, nPos, nTriW, 0.11);
+        vec3 sandTn = texture2D(uSandNormal, nPos.xz * 0.22).xyz * 2.0 - 1.0;
+        vec3 mossTn = texture2D(uMossNormal, nPos.xz * 0.14).xyz * 2.0 - 1.0;
         vec3 sandPerturb = vec3(sandTn.x, 0.0, sandTn.y);
         vec3 mossPerturb = vec3(mossTn.x, 0.0, mossTn.y);
 
         vec3 combinedPerturb = mix(mix(basaltPerturb, sandPerturb, nSand), mossPerturb, nMoss);
-        vec3 perturbedWorldNormal = normalize(nNorm + combinedPerturb * 0.85);
+        vec3 perturbedWorldNormal = normalize(nNorm + combinedPerturb * 0.95);
         normal = normalize((viewMatrix * vec4(perturbedWorldNormal, 0.0)).xyz);
         `,
       );
   };
 
-  material.customProgramCacheKey = () => 'aaa-triplanar-volcanic-terrain-v1';
+  material.customProgramCacheKey = () => 'aaa-triplanar-volcanic-terrain-v2';
   return material;
 }
 
-function createBasaltRockMaterial(options: {
+function createBasaltColumnMaterial(options: {
   readonly textures: WaterfallTextureBundle;
   readonly noiseTexture: THREE.DataTexture;
   readonly timeUniform: { value: number };
-  readonly mossStrength: number;
 }): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     map: options.textures.basalt.albedoMap,
     normalMap: options.textures.basalt.normalMap,
-    normalScale: new THREE.Vector2(1.65, 1.65),
+    normalScale: new THREE.Vector2(1.5, 1.5),
     roughnessMap: options.textures.basalt.rmaMap,
-    roughness: 0.88,
+    roughness: 0.85,
     metalness: 0.06,
-    envMapIntensity: 1.75,
+    envMapIntensity: 1.6,
   });
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = options.timeUniform;
     shader.uniforms.uNoiseTex = { value: options.noiseTexture };
     shader.uniforms.uMossAlbedo = { value: options.textures.moss.albedoMap };
-    shader.uniforms.uMossStrength = { value: options.mossStrength };
     shader.uniforms.uCrestHeight = { value: SCENE_CONFIG.crestHeight };
     shader.uniforms.uPlungeZ = { value: SCENE_CONFIG.plungeCenterZ };
 
@@ -274,11 +290,17 @@ function createBasaltRockMaterial(options: {
         rockWPos = modelMatrix * rockWPos;
         vRockWorldPos = rockWPos.xyz;
 
-        mat3 rockNormMat = mat3(modelMatrix);
+        vec3 instWorldNormal = objectNormal;
         #ifdef USE_INSTANCING
-          rockNormMat = rockNormMat * mat3(instanceMatrix);
+          mat3 im = mat3(instanceMatrix);
+          mat3 adjugateT = mat3(
+            cross(im[1], im[2]),
+            cross(im[2], im[0]),
+            cross(im[0], im[1])
+          );
+          instWorldNormal = adjugateT * objectNormal;
         #endif
-        vRockWorldNormal = normalize(rockNormMat * objectNormal);
+        vRockWorldNormal = normalize(mat3(modelMatrix) * instWorldNormal);
         `,
       );
 
@@ -290,7 +312,6 @@ function createBasaltRockMaterial(options: {
         uniform float uTime;
         uniform sampler2D uNoiseTex;
         uniform sampler2D uMossAlbedo;
-        uniform float uMossStrength;
         uniform float uCrestHeight;
         uniform float uPlungeZ;
         varying vec3 vRockWorldPos;
@@ -304,16 +325,17 @@ function createBasaltRockMaterial(options: {
         vec3 rkPos = vRockWorldPos;
         vec3 rkNorm = normalize(vRockWorldNormal);
 
-        float rkNoise = texture2D(uNoiseTex, rkPos.xz * 0.08 + vec2(rkPos.y * 0.03)).r;
+        diffuseColor.rgb *= vec3(0.68, 0.72, 0.78);
+        float rkNoise = texture2D(uNoiseTex, rkPos.xz * 0.09 + vec2(rkPos.y * 0.025)).r;
         vec3 mossCap = texture2D(uMossAlbedo, rkPos.xz * 0.16).rgb;
-        float capMask = smoothstep(0.55, 0.85, rkNorm.y) * smoothstep(1.2, 4.0, rkPos.y) * smoothstep(0.30, 0.68, rkNoise) * uMossStrength;
+        float capMask = smoothstep(0.72, 0.92, rkNorm.y) * smoothstep(2.0, 5.0, rkPos.y) * smoothstep(0.25, 0.65, rkNoise);
         diffuseColor.rgb = mix(diffuseColor.rgb, mossCap, capMask);
 
-        float rkPoolWet = 1.0 - smoothstep(0.05, 2.2, rkPos.y);
+        float rkPoolWet = 1.0 - smoothstep(0.05, 2.4, rkPos.y);
         float rkFallDist = length(vec2(rkPos.x * 0.65, rkPos.z - uPlungeZ));
         float rkSprayWet = (1.0 - smoothstep(4.5, 16.5, rkFallDist)) * (1.0 - smoothstep(uCrestHeight + 0.5, uCrestHeight + 3.5, rkPos.y));
-        float rkWet = clamp(max(rkPoolWet, rkSprayWet * 0.94), 0.0, 1.0);
-        diffuseColor.rgb = diffuseColor.rgb * 1.45 * mix(1.0, 0.62, rkWet * (1.0 - capMask * 0.75));
+        float rkWet = clamp(max(rkPoolWet, rkSprayWet * 0.95), 0.0, 1.0);
+        diffuseColor.rgb *= mix(1.0, 0.54, rkWet * (1.0 - capMask * 0.8));
         `,
       )
       .replace(
@@ -322,55 +344,221 @@ function createBasaltRockMaterial(options: {
         #include <roughnessmap_fragment>
         vec3 rrPos = vRockWorldPos;
         vec3 rrNorm = normalize(vRockWorldNormal);
-        float rrPoolWet = 1.0 - smoothstep(0.05, 2.3, rrPos.y);
+        float rrPoolWet = 1.0 - smoothstep(0.05, 2.4, rrPos.y);
         float rrFallDist = length(vec2(rrPos.x * 0.65, rrPos.z - uPlungeZ));
         float rrSprayWet = (1.0 - smoothstep(4.5, 16.5, rrFallDist)) * (1.0 - smoothstep(uCrestHeight + 0.5, uCrestHeight + 3.5, rrPos.y));
-        float rrWet = clamp(max(rrPoolWet, rrSprayWet * 0.94), 0.0, 1.0);
-        float rrCap = smoothstep(0.55, 0.85, rrNorm.y) * smoothstep(1.2, 4.0, rrPos.y) * uMossStrength;
-        roughnessFactor = mix(roughnessFactor, 0.94, rrCap * 0.8);
-        roughnessFactor = mix(roughnessFactor, 0.11, rrWet * (1.0 - rrCap * 0.8));
+        float rrWet = clamp(max(rrPoolWet, rrSprayWet * 0.95), 0.0, 1.0);
+        float rrCap = smoothstep(0.72, 0.92, rrNorm.y) * smoothstep(2.0, 5.0, rrPos.y);
+        roughnessFactor = mix(roughnessFactor, 0.94, rrCap * 0.85);
+        roughnessFactor = mix(roughnessFactor, 0.12, rrWet * (1.0 - rrCap * 0.85));
         `,
       );
   };
 
-  material.customProgramCacheKey = () => `aaa-basalt-rock-v1-${options.mossStrength.toFixed(2)}`;
+  material.customProgramCacheKey = () => 'aaa-basalt-column-cofactor-v2';
   return material;
 }
 
-function createFracturedHexColumnGeometry(): THREE.BufferGeometry {
-  const geometry = new THREE.CylinderGeometry(1, 1.05, 1, 6, 10, false);
-  const posAttr = geometry.attributes.position;
-  const uvAttr = geometry.attributes.uv;
-  if (!posAttr || !uvAttr) {
-    return geometry;
+function createBeveledHexColumnGeometry(): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+
+  const sides = 6;
+  const bevelAngle = (6 * Math.PI) / 180;
+  const yRings = 6;
+
+  interface RingVertex {
+    readonly x: number;
+    readonly z: number;
+    readonly nx: number;
+    readonly nz: number;
+    readonly u: number;
   }
 
-  for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i);
-    const z = posAttr.getZ(i);
-    const angle = Math.atan2(z, x);
+  const ringProfile: RingVertex[] = [];
+  for (let s = 0; s < sides; s++) {
+    const faceMidAngle = (s / sides) * Math.PI * 2 + Math.PI / sides;
+    const cornerA = (s / sides) * Math.PI * 2;
+    const cornerB = ((s + 1) / sides) * Math.PI * 2;
 
-    const jointWave = Math.sin(y * 18.0) * 0.022;
-    const facetJitter = Math.sin(angle * 3.0 + y * 5.0) * 0.028;
-    const radialScale = 1 + jointWave + facetJitter;
+    const aBevel = cornerA + bevelAngle;
+    const bBevel = cornerB - bevelAngle;
 
-    if (Math.abs(y) < 0.49) {
-      posAttr.setXYZ(i, x * radialScale, y, z * radialScale);
-    } else if (y > 0.49) {
-      const topSlope = x * 0.04 + z * 0.03;
-      posAttr.setXYZ(i, x * 0.96, y + topSlope, z * 0.96);
+    const faceNx = Math.cos(faceMidAngle);
+    const faceNz = Math.sin(faceMidAngle);
+
+    ringProfile.push({
+      x: Math.cos(aBevel),
+      z: Math.sin(aBevel),
+      nx: faceNx,
+      nz: faceNz,
+      u: (s + 0.08) / sides,
+    });
+    ringProfile.push({
+      x: Math.cos(bBevel),
+      z: Math.sin(bBevel),
+      nx: faceNx,
+      nz: faceNz,
+      u: (s + 0.92) / sides,
+    });
+  }
+
+  const pushTri = (tri: {
+    readonly ax: number;
+    readonly ay: number;
+    readonly az: number;
+    readonly anx: number;
+    readonly any: number;
+    readonly anz: number;
+    readonly au: number;
+    readonly av: number;
+    readonly bx: number;
+    readonly by: number;
+    readonly bz: number;
+    readonly bnx: number;
+    readonly bny: number;
+    readonly bnz: number;
+    readonly bu: number;
+    readonly bv: number;
+    readonly cx: number;
+    readonly cy: number;
+    readonly cz: number;
+    readonly cnx: number;
+    readonly cny: number;
+    readonly cnz: number;
+    readonly cu: number;
+    readonly cv: number;
+  }): void => {
+    positions.push(tri.ax, tri.ay, tri.az, tri.bx, tri.by, tri.bz, tri.cx, tri.cy, tri.cz);
+    normals.push(tri.anx, tri.any, tri.anz, tri.bnx, tri.bny, tri.bnz, tri.cnx, tri.cny, tri.cnz);
+    uvs.push(tri.au, tri.av, tri.bu, tri.bv, tri.cu, tri.cv);
+  };
+
+  for (let r = 0; r < yRings; r++) {
+    const t0 = r / yRings;
+    const t1 = (r + 1) / yRings;
+    const y0 = t0 - 0.5;
+    const y1 = t1 - 0.5;
+    const taper0 = 1.03 - t0 * 0.04;
+    const taper1 = 1.03 - t1 * 0.04;
+
+    for (let i = 0; i < ringProfile.length; i++) {
+      const curr = ringProfile[i];
+      const next = ringProfile[(i + 1) % ringProfile.length];
+      if (!curr || !next) {
+        continue;
+      }
+
+      const isChamfer = i % 2 === 1;
+      const uNext = next.u < curr.u ? next.u + 1 : next.u;
+
+      const cnx = isChamfer ? curr.nx : curr.nx;
+      const cnz = isChamfer ? curr.nz : curr.nz;
+      const nnx = isChamfer ? next.nx : curr.nx;
+      const nnz = isChamfer ? next.nz : curr.nz;
+
+      pushTri({
+        ax: curr.x * taper0,
+        ay: y0,
+        az: curr.z * taper0,
+        anx: cnx,
+        any: 0,
+        anz: cnz,
+        au: curr.u * 2.2,
+        av: t0 * 5.0,
+        bx: next.x * taper0,
+        by: y0,
+        bz: next.z * taper0,
+        bnx: nnx,
+        bny: 0,
+        bnz: nnz,
+        bu: uNext * 2.2,
+        bv: t0 * 5.0,
+        cx: next.x * taper1,
+        cy: y1,
+        cz: next.z * taper1,
+        cnx: nnx,
+        cny: 0,
+        cnz: nnz,
+        cu: uNext * 2.2,
+        cv: t1 * 5.0,
+      });
+
+      pushTri({
+        ax: curr.x * taper0,
+        ay: y0,
+        az: curr.z * taper0,
+        anx: cnx,
+        any: 0,
+        anz: cnz,
+        au: curr.u * 2.2,
+        av: t0 * 5.0,
+        bx: next.x * taper1,
+        by: y1,
+        bz: next.z * taper1,
+        bnx: nnx,
+        bny: 0,
+        bnz: nnz,
+        bu: uNext * 2.2,
+        bv: t1 * 5.0,
+        cx: curr.x * taper1,
+        cy: y1,
+        cz: curr.z * taper1,
+        cnx: cnx,
+        cny: 0,
+        cnz: cnz,
+        cu: curr.u * 2.2,
+        cv: t1 * 5.0,
+      });
+    }
+  }
+
+  for (let i = 0; i < ringProfile.length; i++) {
+    const curr = ringProfile[i];
+    const next = ringProfile[(i + 1) % ringProfile.length];
+    if (!curr || !next) {
+      continue;
     }
 
-    uvAttr.setXY(i, uvAttr.getX(i) * 1.5, uvAttr.getY(i) * 3.5);
+    pushTri({
+      ax: 0,
+      ay: 0.485,
+      az: 0,
+      anx: 0,
+      any: 1,
+      anz: 0,
+      au: 0.5,
+      av: 0.5,
+      bx: next.x * 0.99,
+      by: 0.5,
+      bz: next.z * 0.99,
+      bnx: 0,
+      bny: 1,
+      bnz: 0,
+      bu: next.x * 0.5 + 0.5,
+      bv: next.z * 0.5 + 0.5,
+      cx: curr.x * 0.99,
+      cy: 0.5,
+      cz: curr.z * 0.99,
+      cnx: 0,
+      cny: 1,
+      cnz: 0,
+      cu: curr.x * 0.5 + 0.5,
+      cv: curr.z * 0.5 + 0.5,
+    });
   }
 
-  geometry.computeVertexNormals();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   return geometry;
 }
 
-function createOpenVolcanicTerrainGeometry(): THREE.BufferGeometry {
-  const geometry = new THREE.PlaneGeometry(280, 280, 180, 180);
+function createWarpedVolcanicTerrainGeometry(): THREE.BufferGeometry {
+  const segments = 192;
+  const geometry = new THREE.PlaneGeometry(2, 2, segments, segments);
   geometry.rotateX(-Math.PI / 2);
 
   const posAttr = geometry.attributes.position;
@@ -379,46 +567,253 @@ function createOpenVolcanicTerrainGeometry(): THREE.BufferGeometry {
   }
 
   for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i);
-    const z = posAttr.getZ(i);
+    const nx = posAttr.getX(i);
+    const nz = posAttr.getZ(i);
+    const x = warpTerrainCoordinate(nx);
+    const z = warpTerrainCoordinate(nz) - 8.0;
     const y = computeOpenVolcanicTerrainHeight({ x, z });
-    posAttr.setY(i, y);
+    posAttr.setXYZ(i, x, y, z);
   }
 
   geometry.computeVertexNormals();
   return geometry;
 }
 
-function createBoulderGeometry(seed: number): THREE.BufferGeometry {
-  const geometry = new THREE.DodecahedronGeometry(1, 2);
-  const posAttr = geometry.attributes.position;
-  if (!posAttr) {
-    return geometry;
+function normalizeRockGeometry(rawGeometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const cloned = rawGeometry.clone();
+  cloned.computeBoundingBox();
+  const box = cloned.boundingBox;
+  if (!box) {
+    return cloned;
+  }
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+  const maxExtent = Math.max(size.x, size.y, size.z, 0.001);
+  const scale = 2.0 / maxExtent;
+
+  cloned.translate(-center.x, -box.min.y - size.y * 0.18, -center.z);
+  cloned.scale(scale, scale, scale);
+  cloned.computeBoundingSphere();
+  return cloned;
+}
+
+function buildRockPlacements(): {
+  readonly heroBoulders: RockPlacement[];
+  readonly mediumRocks: RockPlacement[];
+  readonly screeRocks: RockPlacement[];
+} {
+  const rand = createSeededRandom(55123);
+
+  const heroBoulders: RockPlacement[] = [
+    {
+      x: -3.2,
+      y: SCENE_CONFIG.crestHeight - 0.55,
+      z: SCENE_CONFIG.crestZ - 0.35,
+      sx: 1.5,
+      sy: 1.1,
+      sz: 1.35,
+      rx: 0.1,
+      ry: 0.6,
+      rz: -0.08,
+    },
+    {
+      x: 0.4,
+      y: SCENE_CONFIG.crestHeight - 0.65,
+      z: SCENE_CONFIG.crestZ - 0.55,
+      sx: 1.35,
+      sy: 0.95,
+      sz: 1.25,
+      rx: -0.05,
+      ry: 2.1,
+      rz: 0.1,
+    },
+    {
+      x: 3.6,
+      y: SCENE_CONFIG.crestHeight - 0.5,
+      z: SCENE_CONFIG.crestZ - 0.3,
+      sx: 1.55,
+      sy: 1.15,
+      sz: 1.4,
+      rx: 0.08,
+      ry: 4.1,
+      rz: -0.06,
+    },
+    {
+      x: -5.4,
+      y: SCENE_CONFIG.crestHeight - 0.25,
+      z: SCENE_CONFIG.crestZ - 0.6,
+      sx: 2.1,
+      sy: 1.6,
+      sz: 1.9,
+      rx: 0.05,
+      ry: 1.2,
+      rz: 0.04,
+    },
+    {
+      x: 5.5,
+      y: SCENE_CONFIG.crestHeight - 0.2,
+      z: SCENE_CONFIG.crestZ - 0.55,
+      sx: 2.2,
+      sy: 1.7,
+      sz: 2.0,
+      rx: -0.06,
+      ry: 3.4,
+      rz: -0.05,
+    },
+    { x: 7.4, y: -0.25, z: 12.6, sx: 2.2, sy: 1.35, sz: 1.85, rx: 0.05, ry: 1.1, rz: -0.08 },
+    { x: -8.6, y: 0.1, z: 10.2, sx: 2.5, sy: 1.5, sz: 2.1, rx: -0.06, ry: 2.4, rz: 0.05 },
+    { x: 10.2, y: 0.55, z: 4.5, sx: 2.9, sy: 1.95, sz: 2.4, rx: 0.04, ry: 0.4, rz: -0.04 },
+    { x: -10.8, y: 0.75, z: 3.4, sx: 3.1, sy: 2.1, sz: 2.5, rx: -0.05, ry: 3.9, rz: 0.06 },
+    { x: 9.4, y: -0.15, z: 18.8, sx: 1.75, sy: 1.05, sz: 1.5, rx: 0.08, ry: 5.1, rz: -0.05 },
+    { x: 4.8, y: -0.45, z: 15.2, sx: 1.3, sy: 0.78, sz: 1.15, rx: 0.03, ry: 2.8, rz: 0.04 },
+  ];
+
+  const mediumRocks: RockPlacement[] = [];
+  const screeRocks: RockPlacement[] = [];
+
+  for (let i = 0; i < 65; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const x = side * (6.2 + rand() * 24.0);
+    const cliffZ = computeEscarpmentLineZ(x);
+    const z = cliffZ + 1.5 + rand() * 11.5;
+    const groundY = computeOpenVolcanicTerrainHeight({ x, z });
+    const s = 0.85 + Math.pow(rand(), 1.4) * 2.4;
+
+    mediumRocks.push({
+      x,
+      y: groundY - s * 0.18,
+      z,
+      sx: s * (0.9 + rand() * 0.45),
+      sy: s * (0.65 + rand() * 0.4),
+      sz: s * (0.9 + rand() * 0.45),
+      rx: (rand() - 0.5) * 0.5,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.5,
+    });
   }
 
-  const phaseA = seed * 1.7;
-  const phaseB = seed * 2.9;
+  for (let i = 0; i < 110; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const z = -9.5 + rand() * 48.0;
+    const riverCenter = computeRiverCenterX(z);
+    const riverHalfWidth =
+      7.8 +
+      Math.exp(-Math.pow((z - (SCENE_CONFIG.plungeCenterZ + 4)) / 10, 2)) * 5.6 +
+      smoothstep({ edge0: 14, edge1: 95, value: z }) * 9.5;
 
-  for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i);
-    const z = posAttr.getZ(i);
+    const bankOffset = (rand() - 0.22) * 22.0;
+    const x = riverCenter + side * (riverHalfWidth + bankOffset);
+    if (z < computeEscarpmentLineZ(x) + 2.5) {
+      continue;
+    }
 
-    const n1 = Math.sin(x * 2.6 + phaseA) * Math.cos(y * 2.3 + phaseB) * 0.2;
-    const n2 = Math.cos(z * 3.4 - phaseA) * Math.sin(x * 3.1 + z * 1.8) * 0.11;
-    const scale = 1 + n1 + n2;
-    const flattenY = y < 0 ? 0.58 : 0.82;
-
-    posAttr.setXYZ(i, x * scale, y * scale * flattenY, z * scale);
+    const groundY = computeOpenVolcanicTerrainHeight({ x, z });
+    const s = 0.32 + Math.pow(rand(), 1.8) * 1.45;
+    screeRocks.push({
+      x,
+      y: groundY - s * 0.12,
+      z,
+      sx: s * (0.9 + rand() * 0.5),
+      sy: s * (0.52 + rand() * 0.35),
+      sz: s * (0.9 + rand() * 0.5),
+      rx: (rand() - 0.5) * 0.7,
+      ry: rand() * Math.PI * 2,
+      rz: (rand() - 0.5) * 0.7,
+    });
   }
 
-  geometry.computeVertexNormals();
-  return geometry;
+  return { heroBoulders, mediumRocks, screeRocks };
+}
+
+function loadPhotogrammetryRockInstances(options: {
+  readonly url: string;
+  readonly placements: readonly RockPlacement[];
+  readonly group: THREE.Group;
+  readonly anisotropy: number;
+  readonly disposables: {
+    readonly geometries: THREE.BufferGeometry[];
+    readonly materials: THREE.Material[];
+  };
+  readonly onLoaded: () => void;
+}): void {
+  const loader = new GLTFLoader();
+  loader.load(
+    options.url,
+    (gltf) => {
+      let sourceMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((child) => {
+        if (!sourceMesh && child instanceof THREE.Mesh) {
+          sourceMesh = child;
+        }
+      });
+
+      if (!sourceMesh) {
+        return;
+      }
+
+      const foundMesh: THREE.Mesh = sourceMesh;
+      const geometry = normalizeRockGeometry(foundMesh.geometry);
+      options.disposables.geometries.push(geometry);
+
+      const rawMat = Array.isArray(foundMesh.material) ? foundMesh.material[0] : foundMesh.material;
+      let material: THREE.MeshStandardMaterial;
+
+      if (rawMat instanceof THREE.MeshStandardMaterial) {
+        material = rawMat.clone();
+        material.color.setRGB(0.46, 0.5, 0.56);
+        material.roughness = 0.62;
+        material.metalness = 0.04;
+        material.envMapIntensity = 1.45;
+        if (material.map) {
+          material.map.anisotropy = options.anisotropy;
+        }
+        if (material.normalMap) {
+          material.normalMap.anisotropy = options.anisotropy;
+          material.normalScale.set(1.35, 1.35);
+        }
+      } else {
+        material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(0x22262c),
+          roughness: 0.72,
+          metalness: 0.05,
+        });
+      }
+      options.disposables.materials.push(material);
+
+      const instanced = new THREE.InstancedMesh(geometry, material, options.placements.length);
+      instanced.castShadow = true;
+      instanced.receiveShadow = true;
+
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < options.placements.length; i++) {
+        const spec = options.placements[i];
+        if (!spec) {
+          continue;
+        }
+        dummy.position.set(spec.x, spec.y, spec.z);
+        dummy.rotation.set(spec.rx, spec.ry, spec.rz);
+        dummy.scale.set(spec.sx, spec.sy, spec.sz);
+        dummy.updateMatrix();
+        instanced.setMatrixAt(i, dummy.matrix);
+      }
+      instanced.instanceMatrix.needsUpdate = true;
+      options.group.add(instanced);
+      options.onLoaded();
+    },
+    undefined,
+    () => {
+      return;
+    },
+  );
 }
 
 export function createIcelandicCliff(options: {
   readonly noiseTexture: THREE.DataTexture;
   readonly textures: WaterfallTextureBundle;
+  readonly anisotropy: number;
+  readonly onStaticGeometryChanged: () => void;
 }): CliffSystem {
   const group = new THREE.Group();
   const timeUniform = { value: 0 };
@@ -438,36 +833,31 @@ export function createIcelandicCliff(options: {
   };
 
   const terrainMaterial = createTriplanarVolcanicTerrainMaterial(terrainUniforms);
-  const columnMaterial = createBasaltRockMaterial({
+  const columnMaterial = createBasaltColumnMaterial({
     textures: options.textures,
     noiseTexture: options.noiseTexture,
     timeUniform,
-    mossStrength: 0.72,
-  });
-  const boulderMaterial = createBasaltRockMaterial({
-    textures: options.textures,
-    noiseTexture: options.noiseTexture,
-    timeUniform,
-    mossStrength: 0.58,
   });
 
-  const geometriesToDispose: THREE.BufferGeometry[] = [];
-  const materialsToDispose: THREE.Material[] = [terrainMaterial, columnMaterial, boulderMaterial];
+  const geometries: THREE.BufferGeometry[] = [];
+  const materials: THREE.Material[] = [terrainMaterial, columnMaterial];
+  const disposables = { geometries, materials };
 
-  const terrainGeometry = createOpenVolcanicTerrainGeometry();
-  geometriesToDispose.push(terrainGeometry);
+  const terrainGeometry = createWarpedVolcanicTerrainGeometry();
+  disposables.geometries.push(terrainGeometry);
   const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
   terrainMesh.receiveShadow = true;
   terrainMesh.castShadow = true;
   group.add(terrainMesh);
 
-  const columnGeometry = createFracturedHexColumnGeometry();
-  geometriesToDispose.push(columnGeometry);
+  const columnGeometry = createBeveledHexColumnGeometry();
+  disposables.geometries.push(columnGeometry);
 
   const placements = generateBasaltColumnLayout({
     seed: 202611,
-    cliffClusterCount: 145,
-    ledgeOutcropCount: 54,
+    hexRadius: 0.82,
+    rowsDeep: 4,
+    halfSpanX: 28,
   });
 
   const columnInstanced = new THREE.InstancedMesh(
@@ -493,77 +883,31 @@ export function createIcelandicCliff(options: {
   columnInstanced.instanceMatrix.needsUpdate = true;
   group.add(columnInstanced);
 
-  const boulderGeometry = createBoulderGeometry(7);
-  geometriesToDispose.push(boulderGeometry);
-  const rand = createSeededRandom(55123);
-
-  interface BoulderSpec {
-    readonly x: number;
-    readonly y: number;
-    readonly z: number;
-    readonly sx: number;
-    readonly sy: number;
-    readonly sz: number;
-    readonly rx: number;
-    readonly ry: number;
-    readonly rz: number;
-  }
-
-  const boulderSpecs: BoulderSpec[] = [];
-
-  for (let i = 0; i < 85; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    const z = -9.0 + rand() * 58.0;
-    const riverCenter = computeRiverCenterX(z);
-    const riverHalfWidth =
-      7.4 +
-      Math.exp(-Math.pow((z - (SCENE_CONFIG.plungeCenterZ + 4)) / 10, 2)) * 5.2 +
-      smoothstep({ edge0: 14, edge1: 95, value: z }) * 8.5;
-
-    const offsetFromBank = (rand() - 0.12) * 26.0;
-    const x = riverCenter + side * (riverHalfWidth + offsetFromBank);
-
-    if (z < computeEscarpmentLineZ(x) + 3.0) {
-      continue;
-    }
-
-    const groundY = computeOpenVolcanicTerrainHeight({ x, z });
-    const radius = 0.48 + Math.pow(rand(), 1.75) * 2.1;
-
-    boulderSpecs.push({
-      x,
-      y: groundY + radius * 0.25,
-      z,
-      sx: radius * (0.9 + rand() * 0.55),
-      sy: radius * (0.5 + rand() * 0.42),
-      sz: radius * (0.85 + rand() * 0.55),
-      rx: rand() * Math.PI,
-      ry: rand() * Math.PI,
-      rz: rand() * Math.PI,
-    });
-  }
-
-  const bouldersInstanced = new THREE.InstancedMesh(
-    boulderGeometry,
-    boulderMaterial,
-    boulderSpecs.length,
-  );
-  bouldersInstanced.castShadow = true;
-  bouldersInstanced.receiveShadow = true;
-
-  for (let i = 0; i < boulderSpecs.length; i++) {
-    const spec = boulderSpecs[i];
-    if (!spec) {
-      continue;
-    }
-    dummy.position.set(spec.x, spec.y, spec.z);
-    dummy.rotation.set(spec.rx, spec.ry, spec.rz);
-    dummy.scale.set(spec.sx, spec.sy, spec.sz);
-    dummy.updateMatrix();
-    bouldersInstanced.setMatrixAt(i, dummy.matrix);
-  }
-  bouldersInstanced.instanceMatrix.needsUpdate = true;
-  group.add(bouldersInstanced);
+  const rockGroups = buildRockPlacements();
+  loadPhotogrammetryRockInstances({
+    url: '/models/boulder_01/boulder_01_1k.gltf',
+    placements: rockGroups.heroBoulders,
+    group,
+    anisotropy: options.anisotropy,
+    disposables,
+    onLoaded: options.onStaticGeometryChanged,
+  });
+  loadPhotogrammetryRockInstances({
+    url: '/models/moon_rock_01/moon_rock_01_1k.gltf',
+    placements: rockGroups.mediumRocks,
+    group,
+    anisotropy: options.anisotropy,
+    disposables,
+    onLoaded: options.onStaticGeometryChanged,
+  });
+  loadPhotogrammetryRockInstances({
+    url: '/models/moon_rock_02/moon_rock_02_1k.gltf',
+    placements: rockGroups.screeRocks,
+    group,
+    anisotropy: options.anisotropy,
+    disposables,
+    onLoaded: options.onStaticGeometryChanged,
+  });
 
   return {
     group,
@@ -571,10 +915,10 @@ export function createIcelandicCliff(options: {
       timeUniform.value = elapsedSeconds;
     },
     dispose: () => {
-      for (const geo of geometriesToDispose) {
+      for (const geo of disposables.geometries) {
         geo.dispose();
       }
-      for (const mat of materialsToDispose) {
+      for (const mat of disposables.materials) {
         mat.dispose();
       }
     },

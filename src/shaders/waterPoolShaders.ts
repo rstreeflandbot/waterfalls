@@ -1,25 +1,21 @@
-export const WATER_POOL_VERTEX_SHADER = /* glsl */ `
-attribute float aWaterDepth;
+import { SHARED_ATMOS_AND_SHADOW_GLSL } from './sharedShaderGlsl';
 
+export const WATER_POOL_VERTEX_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec2 uPlungeCenter;
 uniform sampler2D uNoiseTex;
 
 varying vec3 vWorldPos;
-varying float vWaterDepth;
 
 void main() {
-  vWaterDepth = aWaterDepth;
   vec4 worldPosition = modelMatrix * vec4(position, 1.0);
   vec2 fromImpact = worldPosition.xz - uPlungeCenter;
   float dist = length(fromImpact);
 
-  float depthDamp = smoothstep(0.0, 0.75, aWaterDepth);
-  float radialWave = sin(dist * 3.0 - uTime * 4.4) * exp(-dist * 0.11) * 0.12;
-  float secondaryWave = sin(dist * 5.8 - uTime * 6.5 + 1.2) * exp(-dist * 0.17) * 0.04;
-  float currentRipple = (texture2D(uNoiseTex, worldPosition.xz * 0.032 - vec2(0.0, uTime * 0.05)).r - 0.5) * 0.09;
+  float radialWave = sin(dist * 2.8 - uTime * 4.2) * exp(-dist * 0.12) * 0.11;
+  float currentRipple = (texture2D(uNoiseTex, worldPosition.xz * 0.03 - vec2(0.0, uTime * 0.045)).r - 0.5) * 0.08;
 
-  worldPosition.y += (radialWave + secondaryWave + currentRipple) * depthDamp;
+  worldPosition.y += radialWave + currentRipple;
   vWorldPos = worldPosition.xyz;
 
   gl_Position = projectionMatrix * viewMatrix * worldPosition;
@@ -32,119 +28,155 @@ uniform vec2 uPlungeCenter;
 uniform vec3 uSunDirection;
 uniform sampler2D uNoiseTex;
 uniform sampler2D uFoamTex;
+uniform sampler2D tSceneColor;
+uniform sampler2D tSceneDepth;
+uniform sampler2D tReflection;
+uniform vec2 uResolution;
+uniform float uCameraNear;
+uniform float uCameraFar;
+uniform sampler2D uSunShadowMap;
+uniform mat4 uSunShadowMatrix;
+uniform float uShadowMapSize;
 
 varying vec3 vWorldPos;
-varying float vWaterDepth;
 
-float sampleWaterHeight(vec2 xz, float time) {
+${SHARED_ATMOS_AND_SHADOW_GLSL}
+
+vec2 computeFlowVector(vec2 xz) {
   vec2 fromImpact = xz - uPlungeCenter;
-  float dist = length(fromImpact);
-  vec2 flowOffset = vec2(0.0, -time * 0.058);
-
-  float shockwave = sin(dist * 3.3 - time * 4.8) * exp(-dist * 0.12) * 0.17;
-  float microShock = sin(dist * 7.2 - time * 7.5) * exp(-dist * 0.20) * 0.045;
-  vec4 broadSwell = texture2D(uNoiseTex, xz * 0.042 + flowOffset);
-  vec4 midWave = texture2D(uNoiseTex, xz * 0.115 - vec2(time * 0.02, time * 0.085));
-  vec4 fineRipple = texture2D(uNoiseTex, xz * 0.25 + vec2(time * 0.025, -time * 0.12));
-
-  return shockwave + microShock + broadSwell.r * 0.34 + midWave.r * 0.16 + fineRipple.b * 0.06;
+  float dist = max(length(fromImpact), 0.1);
+  vec2 radialOut = fromImpact / dist;
+  float radialWeight = exp(-dist * 0.095);
+  vec2 riverFlow = vec2(cos((xz.y + 10.0) * 0.042) * 0.22, 1.0);
+  return normalize(mix(riverFlow, radialOut, radialWeight * 0.72));
 }
 
-vec3 sampleGoldenSkyReflection(vec3 reflDir, vec3 sunDir) {
-  float elev = clamp(reflDir.y, 0.0, 1.0);
-  float horizon = pow(1.0 - elev, 3.2);
-  float sunAlign = max(dot(reflDir, sunDir), 0.0);
+float sampleFlowAdvectedWave(vec2 xz, vec2 flowDir, float time) {
+  float cycleSpeed = 0.24;
+  float phase0 = fract(time * cycleSpeed);
+  float phase1 = fract(time * cycleSpeed + 0.5);
+  float blend = abs(phase0 * 2.0 - 1.0);
 
-  vec3 zenith = vec3(0.045, 0.075, 0.12);
-  vec3 warmHorizon = vec3(0.74, 0.44, 0.24);
-  vec3 coolHorizon = vec3(0.18, 0.23, 0.30);
-  vec3 sky = mix(zenith, mix(coolHorizon, warmHorizon, 0.40 + 0.60 * pow(sunAlign, 1.9)), horizon);
-  sky += vec3(1.15, 0.70, 0.38) * pow(sunAlign, 14.0) * 0.52;
+  vec2 uv0 = xz * 0.085 - flowDir * phase0 * 1.4;
+  vec2 uv1 = xz * 0.085 - flowDir * phase1 * 1.4 + vec2(0.37, 0.61);
 
-  float cliffMask = smoothstep(-0.2, 0.4, reflDir.z) * 0.55 + 0.45;
-  float cliffDarkness = smoothstep(0.02, 0.30, elev);
-  return mix(vec3(0.022, 0.028, 0.036), sky * cliffMask, cliffDarkness);
+  float broad0 = texture2D(uNoiseTex, uv0).r;
+  float broad1 = texture2D(uNoiseTex, uv1).r;
+  float broad = mix(broad0, broad1, blend);
+
+  float fine0 = texture2D(uNoiseTex, uv0 * 2.45 + vec2(0.11, -time * 0.08)).b;
+  float fine1 = texture2D(uNoiseTex, uv1 * 2.45 + vec2(0.53, -time * 0.08)).b;
+  float fine = mix(fine0, fine1, blend);
+
+  float dist = length(xz - uPlungeCenter);
+  float shock = sin(dist * 3.2 - time * 4.7) * exp(-dist * 0.13) * 0.16;
+
+  return shock + broad * 0.36 + fine * 0.14;
+}
+
+float sampleFlowAdvectedFoam(vec2 xz, vec2 flowDir, float time) {
+  float cycleSpeed = 0.22;
+  float phase0 = fract(time * cycleSpeed);
+  float phase1 = fract(time * cycleSpeed + 0.5);
+  float blend = abs(phase0 * 2.0 - 1.0);
+
+  vec2 uv0 = xz * 0.09 - flowDir * phase0 * 1.65;
+  vec2 uv1 = xz * 0.09 - flowDir * phase1 * 1.65 + vec2(0.43, 0.29);
+
+  float f0 = texture2D(uFoamTex, uv0).g * 0.6 + texture2D(uNoiseTex, uv0 * 1.6).g * 0.4;
+  float f1 = texture2D(uFoamTex, uv1).g * 0.6 + texture2D(uNoiseTex, uv1 * 1.6).g * 0.4;
+  return mix(f0, f1, blend);
 }
 
 void main() {
-  if (vWaterDepth <= 0.002) {
+  vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
+  float rawSceneDepth = texture2D(tSceneDepth, screenUv).r;
+  if (gl_FragCoord.z > rawSceneDepth + 0.00015) {
+    discard;
+  }
+
+  float sceneZ = linearizeDepth(rawSceneDepth, uCameraNear, uCameraFar);
+  float waterZ = linearizeDepth(gl_FragCoord.z, uCameraNear, uCameraFar);
+  float viewDepth = max(sceneZ - waterZ, 0.0);
+  if (viewDepth < 0.008) {
     discard;
   }
 
   vec2 xz = vWorldPos.xz;
+  vec2 flowDir = computeFlowVector(xz);
   float eps = 0.14;
 
-  float hCenter = sampleWaterHeight(xz, uTime);
-  float hRight = sampleWaterHeight(xz + vec2(eps, 0.0), uTime);
-  float hForward = sampleWaterHeight(xz + vec2(0.0, eps), uTime);
+  float hC = sampleFlowAdvectedWave(xz, flowDir, uTime);
+  float hR = sampleFlowAdvectedWave(xz + vec2(eps, 0.0), flowDir, uTime);
+  float hF = sampleFlowAdvectedWave(xz + vec2(0.0, eps), flowDir, uTime);
 
-  float calmNearShore = smoothstep(0.05, 0.65, vWaterDepth);
-  vec3 normal = normalize(vec3((hCenter - hRight) * 1.05 * calmNearShore, eps * 3.1, (hCenter - hForward) * 1.05 * calmNearShore));
+  float waveCalm = smoothstep(0.05, 0.9, viewDepth);
+  vec3 normal = normalize(vec3((hC - hR) * 1.25 * waveCalm, eps * 2.9, (hC - hF) * 1.25 * waveCalm));
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
   vec3 sunDir = normalize(uSunDirection);
 
+  float sunShadow = sampleSunShadowPcf(
+    vWorldPos,
+    vec3(0.0, 1.0, 0.0),
+    sunDir,
+    uSunShadowMap,
+    uSunShadowMatrix,
+    uShadowMapSize
+  );
+
+  vec2 refrOffset = normal.xz * clamp(viewDepth * 0.045, 0.0, 0.028);
+  vec2 refrUv = clamp(screenUv + refrOffset, vec2(0.002), vec2(0.998));
+  float refrSceneZ = linearizeDepth(texture2D(tSceneDepth, refrUv).r, uCameraNear, uCameraFar);
+  if (refrSceneZ < waterZ) {
+    refrUv = screenUv;
+  }
+
+  vec3 underwaterColor = texture2D(tSceneColor, refrUv).rgb;
+  vec3 absorption = exp(-viewDepth * vec3(0.72, 0.34, 0.25));
+  vec3 deepGlacialScatter = vec3(0.009, 0.028, 0.036);
+  vec3 refractedWater = mix(deepGlacialScatter, underwaterColor * absorption, clamp(absorption.b, 0.0, 1.0));
+
+  float distToImpact = length(xz - uPlungeCenter);
+  float aeratedPoolGlow = exp(-distToImpact * 0.14) * 0.045;
+  refractedWater += vec3(0.03, 0.065, 0.075) * aeratedPoolGlow;
+
+  vec2 reflUv = clamp(vec2(screenUv.x, 1.0 - screenUv.y) + normal.xz * 0.055, vec2(0.002), vec2(0.998));
+  vec3 planarReflection = texture2D(tReflection, reflUv).rgb;
+
   float ndotv = clamp(dot(normal, viewDir), 0.0, 1.0);
-  float fresnel = 0.025 + 0.975 * pow(1.0 - ndotv, 5.0);
+  float fresnel = 0.02 + 0.98 * pow(1.0 - ndotv, 5.0);
 
-  vec3 reflDir = reflect(-viewDir, normal);
-  vec3 skyReflection = sampleGoldenSkyReflection(reflDir, sunDir);
-
-  vec2 fromImpact = xz - uPlungeCenter;
-  float distToImpact = length(fromImpact);
-  float radialAngle = atan(fromImpact.y, fromImpact.x);
-
-  vec3 shallowClear = vec3(0.028, 0.042, 0.048);
-  vec3 midGlacial = vec3(0.024, 0.068, 0.084);
-  vec3 deepObsidianTeal = vec3(0.012, 0.036, 0.048);
-
-  float depthRatio = smoothstep(0.15, 2.2, vWaterDepth);
-  vec3 waterBody = mix(shallowClear, mix(midGlacial, deepObsidianTeal, depthRatio), smoothstep(0.05, 0.9, vWaterDepth));
-
-  float plungeTurbulenceGlow = exp(-distToImpact * 0.16);
-  waterBody += vec3(0.055, 0.11, 0.13) * plungeTurbulenceGlow;
-
-  vec3 surfaceColor = mix(waterBody, skyReflection, clamp(fresnel * 0.92, 0.0, 0.88));
+  vec3 surfaceColor = mix(refractedWater, planarReflection, clamp(fresnel * 0.94, 0.0, 0.94));
 
   vec3 halfVec = normalize(sunDir + viewDir);
-  float specTight = pow(max(dot(normal, halfVec), 0.0), 280.0) * 2.8;
-  float specBroad = pow(max(dot(normal, halfVec), 0.0), 36.0) * 0.18;
-  surfaceColor += vec3(1.12, 0.74, 0.44) * (specTight + specBroad);
+  float specTight = pow(max(dot(normal, halfVec), 0.0), 320.0) * 3.6 * sunShadow;
+  float specBroad = pow(max(dot(normal, halfVec), 0.0), 38.0) * 0.20 * sunShadow;
+  surfaceColor += vec3(1.25, 0.78, 0.42) * (specTight + specBroad);
 
-  vec2 outflowUv = vec2(xz.x * 0.06, xz.y * 0.048 - uTime * 0.062);
-  vec4 foamWarp = texture2D(uNoiseTex, outflowUv);
-  float radialFoam = texture2D(
-    uFoamTex,
-    vec2(radialAngle * 0.55 + foamWarp.r * 0.22, distToImpact * 0.09 - uTime * 0.14)
-  ).r;
-  float riverLace = texture2D(uFoamTex, outflowUv * 1.65 + (foamWarp.rg - 0.5) * 0.18).g;
+  float advectedFoam = sampleFlowAdvectedFoam(xz, flowDir, uTime);
+  float plungeFoam =
+    (1.0 - smoothstep(1.5, 9.6, distToImpact)) *
+    smoothstep(0.26, 0.72, advectedFoam + exp(-distToImpact * 0.22) * 0.55);
+  float trailingLace =
+    (1.0 - smoothstep(5.5, 28.0, distToImpact)) *
+    smoothstep(0.56, 0.84, advectedFoam) *
+    smoothstep(uPlungeCenter.y - 1.0, uPlungeCenter.y + 4.0, xz.y);
+  float contactFoam =
+    smoothstep(0.02, 0.18, viewDepth) *
+    (1.0 - smoothstep(0.18, 0.72, viewDepth)) *
+    smoothstep(0.46, 0.78, advectedFoam) *
+    (0.35 + 0.65 * exp(-distToImpact * 0.04));
 
-  float impactRing = (1.0 - smoothstep(2.0, 9.2, distToImpact)) * smoothstep(0.36, 0.80, radialFoam + foamWarp.g * 0.22);
-  float trailingVeins =
-    (1.0 - smoothstep(5.5, 24.0, distToImpact)) *
-    smoothstep(0.56, 0.86, riverLace * 0.72 + foamWarp.g * 0.35) *
-    smoothstep(uPlungeCenter.y - 1.0, uPlungeCenter.y + 5.5, xz.y);
-  float shorelineFoam =
-    smoothstep(0.02, 0.14, vWaterDepth) *
-    (1.0 - smoothstep(0.14, 0.42, vWaterDepth)) *
-    smoothstep(0.54, 0.82, foamWarp.g) *
-    (0.35 + 0.65 * exp(-distToImpact * 0.045));
+  float foamMask = clamp(plungeFoam * 1.1 + trailingLace * 0.48 + contactFoam * 0.65, 0.0, 0.92);
 
-  float foamMask = clamp(impactRing * 0.95 + trailingVeins * 0.44 + shorelineFoam * 0.45, 0.0, 0.88);
-
-  vec3 foamShadow = vec3(0.38, 0.46, 0.53);
-  vec3 foamLit = vec3(0.84, 0.85, 0.84);
-  float sunWarmth = clamp(dot(normal, sunDir) * 0.55 + 0.45, 0.0, 1.0);
-  vec3 foamColor = mix(foamShadow, foamLit, sunWarmth);
+  vec3 foamAmbient = vec3(0.11, 0.15, 0.19);
+  vec3 foamDirect = vec3(0.92, 0.66, 0.44) * sunShadow * clamp(dot(normal, sunDir) * 0.6 + 0.4, 0.0, 1.0);
+  vec3 foamColor = vec3(0.84, 0.88, 0.91) * (foamAmbient + foamDirect * 0.75);
 
   surfaceColor = mix(surfaceColor, foamColor, foamMask);
+  surfaceColor = applyLinearHeightFog(surfaceColor, vWorldPos, cameraPosition, sunDir);
 
-  float camDist = length(cameraPosition - vWorldPos);
-  float fogFactor = 1.0 - exp(-pow(camDist * 0.0056, 2.0));
-  surfaceColor = mix(surfaceColor, vec3(0.16, 0.20, 0.25), fogFactor * 0.82);
-
-  float edgeSoftness = smoothstep(0.0, 0.34, vWaterDepth);
-  float waterOpacity = mix(0.28, 0.96, smoothstep(0.06, 1.15, vWaterDepth));
-  float alpha = clamp(edgeSoftness * (waterOpacity + foamMask * 0.4), 0.0, 0.98);
-  gl_FragColor = vec4(surfaceColor, alpha);
+  float shoreSoftness = smoothstep(0.0, 0.22, viewDepth);
+  gl_FragColor = vec4(surfaceColor, shoreSoftness);
 }
 `;
