@@ -12,8 +12,8 @@ export interface CameraController {
   readonly dispose: () => void;
 }
 
-const HERO_CAMERA_POSITION = new THREE.Vector3(12.8, 3.1, 22.8);
-const HERO_CAMERA_TARGET = new THREE.Vector3(-0.3, 11.2, -12.4);
+const HERO_CAMERA_TARGET = new THREE.Vector3(-0.3, 10.4, -12.4);
+const HERO_CAMERA_POSITION = new THREE.Vector3(21.3, 11.8, 47.7);
 
 export function createCameraController(options: {
   readonly camera: THREE.PerspectiveCamera;
