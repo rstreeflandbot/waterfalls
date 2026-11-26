@@ -308,6 +308,9 @@ interface WaterfallMaterialUniforms {
   readonly uSunShadowMap: { value: THREE.Texture };
   readonly uSunShadowMatrix: { value: THREE.Matrix4 };
   readonly uShadowMapSize: { value: number };
+  readonly uForestMode: { value: number };
+  readonly uFogCool: { value: THREE.Vector3 };
+  readonly uFogWarm: { value: THREE.Vector3 };
 }
 
 export function createIcelandicWaterfall(options: {
@@ -355,6 +358,21 @@ export function createIcelandicWaterfall(options: {
       uSunShadowMap: { value: options.fallbackTexture },
       uSunShadowMatrix: { value: new THREE.Matrix4() },
       uShadowMapSize: { value: 1024 },
+      uForestMode: { value: options.preset.id === 'forest' ? 1 : 0 },
+      uFogCool: {
+        value: new THREE.Vector3(
+          options.preset.fogLinearCool[0],
+          options.preset.fogLinearCool[1],
+          options.preset.fogLinearCool[2],
+        ),
+      },
+      uFogWarm: {
+        value: new THREE.Vector3(
+          options.preset.fogLinearWarm[0],
+          options.preset.fogLinearWarm[1],
+          options.preset.fogLinearWarm[2],
+        ),
+      },
     };
     materialUniforms.push(uniforms);
 
@@ -376,20 +394,20 @@ export function createIcelandicWaterfall(options: {
       widthTop: FOREST_WATERFALL_CONFIG.upperWidthTop,
       widthBottom: FOREST_WATERFALL_CONFIG.upperWidthBottom,
       startYFn: computeForestUpperCrestY,
-      endY: FOREST_WATERFALL_CONFIG.midShelfHeight - 0.55,
+      endY: FOREST_WATERFALL_CONFIG.midShelfHeight + 0.08,
       startZFn: (x) => computeForestEscarpmentZ(x),
-      forwardReach: 3.0,
-      centerShiftX: -0.15,
+      forwardReach: 2.85,
+      centerShiftX: -0.1,
       hasLipUpstream: true,
     });
     geometriesToDispose.push(upperTierGeo);
     const upperTierMat = createWaterfallMat({
-      opacity: 0.96,
-      speed: 1.62,
-      turbulence: 0.88,
+      opacity: 0.97,
+      speed: 1.72,
+      turbulence: 0.72,
       phaseOffset: 0.4,
-      coreDensity: 0.84,
-      horizontalRepeat: 1.65,
+      coreDensity: 0.88,
+      horizontalRepeat: 1.4,
     });
     const upperMesh = new THREE.Mesh(upperTierGeo, upperTierMat);
     upperMesh.renderOrder = 3;
@@ -400,19 +418,19 @@ export function createIcelandicWaterfall(options: {
       widthBottom: FOREST_WATERFALL_CONFIG.lowerWidthBottom,
       startYFn: computeForestMidShelfY,
       endY: -0.65,
-      startZFn: (x) => FOREST_WATERFALL_CONFIG.midShelfZ + Math.sin(x * 0.48) * 0.42,
-      forwardReach: 3.35,
-      centerShiftX: 0.12,
-      hasLipUpstream: false,
+      startZFn: (x) => FOREST_WATERFALL_CONFIG.midShelfZ + Math.sin(x * 0.48) * 0.35,
+      forwardReach: 3.15,
+      centerShiftX: 0.08,
+      hasLipUpstream: true,
     });
     geometriesToDispose.push(lowerTierGeo);
     const lowerTierMat = createWaterfallMat({
-      opacity: 0.96,
-      speed: 1.54,
-      turbulence: 1.02,
+      opacity: 0.97,
+      speed: 1.56,
+      turbulence: 0.96,
       phaseOffset: 2.9,
-      coreDensity: 0.78,
-      horizontalRepeat: 2.25,
+      coreDensity: 0.84,
+      horizontalRepeat: 2.1,
     });
     const lowerMesh = new THREE.Mesh(lowerTierGeo, lowerTierMat);
     lowerMesh.renderOrder = 3;
@@ -420,43 +438,43 @@ export function createIcelandicWaterfall(options: {
 
     const forestPlumes = [
       {
-        centerX: -0.15,
-        widthTop: 1.55,
-        widthBottom: 2.65,
-        startY: computeForestUpperCrestY(-0.15) - 0.9,
-        endY: FOREST_WATERFALL_CONFIG.midShelfHeight - 0.25,
-        startZ: computeForestEscarpmentZ(-0.15) + 0.72,
-        forwardReach: 3.55,
-        archDepth: 0.65,
+        centerX: -0.1,
+        widthTop: 1.25,
+        widthBottom: 2.25,
+        startY: computeForestUpperCrestY(-0.1) - 0.8,
+        endY: FOREST_WATERFALL_CONFIG.midShelfHeight + 0.15,
+        startZ: computeForestEscarpmentZ(-0.1) + 0.65,
+        forwardReach: 3.35,
+        archDepth: 0.56,
         phase: 1.9,
-        speed: 1.78,
-        opacity: 0.54,
+        speed: 1.84,
+        opacity: 0.58,
       },
       {
-        centerX: -1.6,
-        widthTop: 2.0,
-        widthBottom: 3.1,
-        startY: computeForestMidShelfY(-1.6) - 0.55,
+        centerX: -1.35,
+        widthTop: 1.65,
+        widthBottom: 2.65,
+        startY: computeForestMidShelfY(-1.35) - 0.45,
         endY: -0.45,
-        startZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.72,
-        forwardReach: 4.0,
-        archDepth: 0.74,
+        startZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.65,
+        forwardReach: 3.75,
+        archDepth: 0.66,
         phase: 4.8,
-        speed: 1.7,
-        opacity: 0.55,
+        speed: 1.72,
+        opacity: 0.58,
       },
       {
-        centerX: 1.45,
-        widthTop: 2.15,
-        widthBottom: 3.25,
-        startY: computeForestMidShelfY(1.45) - 0.55,
+        centerX: 1.2,
+        widthTop: 1.75,
+        widthBottom: 2.75,
+        startY: computeForestMidShelfY(1.2) - 0.45,
         endY: -0.45,
-        startZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.72,
-        forwardReach: 4.1,
-        archDepth: 0.78,
+        startZ: FOREST_WATERFALL_CONFIG.midShelfZ + 0.65,
+        forwardReach: 3.85,
+        archDepth: 0.7,
         phase: 7.4,
-        speed: 1.76,
-        opacity: 0.54,
+        speed: 1.78,
+        opacity: 0.58,
       },
     ];
 

@@ -25,6 +25,7 @@ describe('forestCanyonMath', () => {
       z: 24,
     });
     const canyonFlank = computeForestCanyonTerrainHeight({ x: 26, z: 4 });
+    const skyNotchBehindFalls = computeForestCanyonTerrainHeight({ x: 0, z: -72 });
 
     expect(upperPlateau).toBeGreaterThan(28);
     expect(midShelf).toBeGreaterThan(8);
@@ -32,6 +33,7 @@ describe('forestCanyonMath', () => {
     expect(plungePool).toBeLessThan(0);
     expect(riverMid).toBeLessThan(0);
     expect(canyonFlank).toBeGreaterThan(10);
+    expect(skyNotchBehindFalls).toBeLessThan(48);
   });
 
   it('varies upper crest and mid-shelf elevations asymmetrically across x', () => {

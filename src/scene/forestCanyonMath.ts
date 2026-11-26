@@ -18,16 +18,16 @@ export interface ForestWaterfallConfig {
 export const FOREST_WATERFALL_CONFIG: ForestWaterfallConfig = {
   upperCrestHeight: 33.4,
   upperCrestZ: -18.8,
-  upperWidthTop: 3.1,
-  upperWidthBottom: 4.7,
+  upperWidthTop: 1.85,
+  upperWidthBottom: 3.15,
   midShelfHeight: 12.6,
   midShelfZ: -13.4,
-  lowerWidthTop: 5.5,
-  lowerWidthBottom: 7.8,
+  lowerWidthTop: 4.4,
+  lowerWidthBottom: 6.4,
   plungeCenterZ: -8.2,
   bridgeDeckY: 15.6,
   bridgeZ: -11.2,
-  bridgeHalfSpan: 9.8,
+  bridgeHalfSpan: 11.2,
 };
 
 function hashForest2d(coords: { readonly x: number; readonly z: number }): number {
@@ -135,10 +135,10 @@ export function computeForestCanyonTerrainHeight(input: TerrainHeightInput): num
   const valleyMicro = ridgedMultifractal2d({ x: x * 0.042 - 3.2, z: z * 0.042 + 1.9, octaves: 3 });
 
   const innerGorgeButtress =
-    smoothstep({ edge0: cliffZ - 2.0, edge1: cliffZ + 3.5, value: z }) *
-    (1 - smoothstep({ edge0: -3.5, edge1: 14.0, value: z })) *
-    smoothstep({ edge0: 5.2, edge1: 12.5, value: Math.abs(x) }) *
-    (16.8 + valleyMicro * 6.4);
+    smoothstep({ edge0: cliffZ - 2.0, edge1: cliffZ + 3.2, value: z }) *
+    (1 - smoothstep({ edge0: -3.0, edge1: 15.0, value: z })) *
+    smoothstep({ edge0: 4.8, edge1: 10.6, value: Math.abs(x) }) *
+    (19.2 + valleyMicro * 6.0);
 
   const canyonFlanks =
     valleyOpen *
@@ -155,9 +155,11 @@ export function computeForestCanyonTerrainHeight(input: TerrainHeightInput): num
     smoothstep({ edge0: riverHalfWidth - 0.6, edge1: riverHalfWidth + 13.0, value: distToRiver }) *
     (2.8 + valleyMicro * 2.5);
 
+  const skyNotchMask = smoothstep({ edge0: 14.0, edge1: 42.0, value: Math.abs(x) });
   const distantForestRidges =
     (1 - smoothstep({ edge0: -140, edge1: -44, value: z })) *
-    (14.0 + ridgedMultifractal2d({ x: x * 0.022 + 5.1, z: z * 0.022 + 2.4, octaves: 4 }) * 30.0);
+    skyNotchMask *
+    (4.0 + ridgedMultifractal2d({ x: x * 0.022 + 5.1, z: z * 0.022 + 2.4, octaves: 4 }) * 8.0);
 
   const rockMicro = (noiseForest2d({ x: x * 0.32, z: z * 0.32 }) - 0.5) * 0.58;
   const waterDepression =

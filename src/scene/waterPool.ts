@@ -64,6 +64,21 @@ export function createGlacialWaterPool(options: {
     uSunShadowMap: { value: options.fallbackTexture },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uShadowMapSize: { value: 1024 },
+    uForestMode: { value: options.preset.id === 'forest' ? 1 : 0 },
+    uFogCool: {
+      value: new THREE.Vector3(
+        options.preset.fogLinearCool[0],
+        options.preset.fogLinearCool[1],
+        options.preset.fogLinearCool[2],
+      ),
+    },
+    uFogWarm: {
+      value: new THREE.Vector3(
+        options.preset.fogLinearWarm[0],
+        options.preset.fogLinearWarm[1],
+        options.preset.fogLinearWarm[2],
+      ),
+    },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -103,6 +118,17 @@ export function createGlacialWaterPool(options: {
         preset.waterStyle.aeratedGlow[0],
         preset.waterStyle.aeratedGlow[1],
         preset.waterStyle.aeratedGlow[2],
+      );
+      uniforms.uForestMode.value = preset.id === 'forest' ? 1 : 0;
+      uniforms.uFogCool.value.set(
+        preset.fogLinearCool[0],
+        preset.fogLinearCool[1],
+        preset.fogLinearCool[2],
+      );
+      uniforms.uFogWarm.value.set(
+        preset.fogLinearWarm[0],
+        preset.fogLinearWarm[1],
+        preset.fogLinearWarm[2],
       );
     },
     setSceneTextures: (sceneOpts) => {

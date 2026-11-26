@@ -42,10 +42,10 @@ void main() {
 
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   float phase = worldPos.x * 0.28 + worldPos.z * 0.24 + worldPos.y * 0.16;
-  float gust = sin(uTime * 1.45 + phase) * 0.16 + sin(uTime * 3.1 + phase * 2.1) * 0.05;
-  worldPos.x += gust * uWindStrength * (0.35 + aCardShade * 0.65);
-  worldPos.z += cos(uTime * 1.2 + phase) * 0.09 * uWindStrength;
-  worldPos.y += sin(uTime * 2.3 + phase) * 0.03 * uWindStrength;
+  float gust = sin(uTime * 1.45 + phase) * 0.12 + sin(uTime * 3.1 + phase * 2.1) * 0.04;
+  worldPos.x += gust * uWindStrength * (0.25 + aCardShade * 0.75);
+  worldPos.z += cos(uTime * 1.2 + phase) * 0.07 * uWindStrength;
+  worldPos.y += sin(uTime * 2.3 + phase) * 0.025 * uWindStrength;
 
   mat3 im = mat3(instanceMatrix);
   mat3 adjugateT = mat3(
@@ -80,16 +80,14 @@ ${SHARED_ATMOS_AND_SHADOW_GLSL}
 
 void main() {
   vec4 texSample = texture2D(uLeafTex, vUv);
-  if (texSample.a < 0.30) {
+  float mipBoost = 1.0 + clamp(length(fwidth(vUv)) * 18.0, 0.0, 0.68);
+  if (texSample.a * mipBoost < 0.30) {
     discard;
   }
 
   vec3 sunDir = normalize(uSunDirection);
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
   vec3 n = normalize(vWorldNormal);
-  if (!gl_FrontFacing) {
-    n = -n;
-  }
 
   float shadow = sampleSunShadowPcf(
     vWorldPos,
@@ -100,31 +98,36 @@ void main() {
     uShadowMapSize
   );
 
+  float slotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vWorldPos.x));
+  float depthInGorge = 1.0 - smoothstep(1.5, 23.0, vWorldPos.y);
+  float backWallPocket = 1.0 - smoothstep(-19.0, 8.0, vWorldPos.z);
+  float gorgeSkyAo = mix(1.0, 0.22, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
+
   vec3 linearTex = pow(texSample.rgb, vec3(2.2));
-  vec3 crownShade = mix(vec3(0.42, 0.34, 0.3), vec3(1.14, 1.08, 0.96), vCardShade);
+  vec3 crownShade = mix(vec3(0.18, 0.14, 0.12), vec3(1.18, 1.12, 1.02), vCardShade);
   vec3 albedo = linearTex * vCanopyColor * crownShade;
 
-  float wrapNdotL = clamp((dot(n, sunDir) + 0.45) / 1.45, 0.0, 1.0);
-  float lit = mix(0.28, 1.0, shadow) * wrapNdotL;
+  float wrapNdotL = clamp((dot(n, sunDir) + 0.42) / 1.42, 0.0, 1.0);
+  float lit = mix(0.14, 1.0, shadow) * wrapNdotL;
 
-  float backLight = pow(max(dot(-viewDir, sunDir), 0.0), 2.2);
-  float rimGlow = pow(1.0 - abs(dot(n, viewDir)), 2.0) * 0.45;
-  float translucency = (backLight * 0.9 + rimGlow * 0.45) * mix(0.35, 1.0, shadow) * (0.4 + 0.6 * vCardShade);
+  float backLight = pow(max(dot(-viewDir, sunDir), 0.0), 2.3);
+  float rimGlow = pow(1.0 - abs(dot(n, viewDir)), 2.2) * 0.42;
+  float translucency = (backLight * 1.15 + rimGlow * 0.45) * mix(0.24, 1.0, shadow) * (0.28 + 0.72 * vCardShade);
 
-  vec3 skyAmbient = mix(vec3(0.12, 0.15, 0.12), vec3(0.32, 0.36, 0.30), vCardShade);
-  vec3 directLight = vec3(2.05, 1.62, 0.98) * lit;
-  vec3 sssColor = albedo * vec3(2.0, 1.32, 0.44) * translucency * uSubsurfaceStrength;
+  vec3 skyAmbient = mix(vec3(0.05, 0.065, 0.07), vec3(0.24, 0.28, 0.31), vCardShade) * gorgeSkyAo;
+  vec3 directLight = vec3(2.4, 1.85, 1.05) * lit;
+  vec3 sssColor = albedo * vec3(2.35, 1.42, 0.32) * translucency * uSubsurfaceStrength;
 
   vec3 color = albedo * (skyAmbient + directLight) + sssColor;
 
   vec3 toFrag = vWorldPos - cameraPosition;
   float dist = length(toFrag);
   vec3 rayDir = toFrag / max(dist, 0.0001);
-  float heightMist = smoothstep(14.0, 44.0, vWorldPos.y) * 0.48 + exp(-max(vWorldPos.y, 0.0) * 0.028) * 0.52;
-  float fogDensity = 0.0048 * (0.55 + 0.72 * heightMist);
-  float fogFactor = clamp(1.0 - exp(-pow(dist * fogDensity, 1.38)), 0.0, 0.78);
+  float rimMist = smoothstep(22.0, 48.0, vWorldPos.y) * 0.58 + exp(-max(vWorldPos.y, 0.0) * 0.032) * 0.28;
+  float fogDensity = 0.0024 * (0.55 + rimMist);
+  float fogFactor = clamp(1.0 - exp(-pow(dist * fogDensity, 1.35)), 0.0, 0.74);
   float sunAlign = max(dot(rayDir, sunDir), 0.0);
-  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.84);
+  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.78);
   color = mix(color, fogColor, fogFactor);
 
   gl_FragColor = vec4(color, 1.0);
@@ -150,16 +153,16 @@ void main() {
   vec2 awayFromFalls = instOrigin.xz - uPlungeCenter;
   float distToFalls = max(length(awayFromFalls), 0.1);
   vec2 radialDir = awayFromFalls / distToFalls;
-  float downdraft = exp(-distToFalls * 0.05) * 0.32;
+  float downdraft = exp(-distToFalls * 0.05) * 0.28;
 
-  float gust = sin(uTime * 1.9 + instOrigin.x * 0.34 + instOrigin.z * 0.27) * 0.14;
-  float flutter = sin(uTime * 4.8 + instOrigin.x * 1.3 - instOrigin.z * 0.95) * 0.04;
+  float gust = sin(uTime * 1.9 + instOrigin.x * 0.34 + instOrigin.z * 0.27) * 0.12;
+  float flutter = sin(uTime * 4.8 + instOrigin.x * 1.3 - instOrigin.z * 0.95) * 0.035;
   float bendAmount = uv.y * uv.y;
 
   vec4 worldPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
   worldPos.x += (radialDir.x * downdraft + gust + flutter) * bendAmount;
   worldPos.z += (radialDir.y * downdraft + gust * 0.7) * bendAmount;
-  worldPos.y -= abs(downdraft + gust) * 0.12 * bendAmount;
+  worldPos.y -= abs(downdraft + gust) * 0.11 * bendAmount;
 
   mat3 im = mat3(instanceMatrix);
   mat3 adjugateT = mat3(
@@ -206,144 +209,281 @@ void main() {
     uShadowMapSize
   );
 
-  vec3 rootColor = vec3(0.022, 0.052, 0.014) * vBladeTint;
-  vec3 tipColor = vec3(0.14, 0.24, 0.045) * vBladeTint;
+  float slotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vWorldPos.x));
+  float depthInGorge = 1.0 - smoothstep(1.5, 23.0, vWorldPos.y);
+  float backWallPocket = 1.0 - smoothstep(-19.0, 8.0, vWorldPos.z);
+  float gorgeSkyAo = mix(1.0, 0.18, depthInGorge * (0.55 * slotNarrow + 0.45 * backWallPocket));
+
+  vec3 rootColor = vec3(0.008, 0.024, 0.006) * vBladeTint;
+  vec3 tipColor = vec3(0.085, 0.165, 0.028) * vBladeTint;
   vec3 albedo = mix(rootColor, tipColor, smoothstep(0.0, 1.0, vHeightT));
 
-  float sunFacing = clamp((dot(litNormal, sunDir) + 0.35) / 1.35, 0.0, 1.0) * mix(0.32, 1.0, shadow);
-  float sss = pow(max(dot(-viewDir, sunDir), 0.0), 2.4) * mix(0.3, 1.0, shadow) * vHeightT;
+  float sunFacing = clamp((dot(litNormal, sunDir) + 0.32) / 1.32, 0.0, 1.0) * shadow;
+  float sss = pow(max(dot(-viewDir, sunDir), 0.0), 2.5) * shadow * vHeightT;
 
-  vec3 skyAmbient = vec3(0.14, 0.19, 0.14) * (0.45 + 0.55 * vHeightT);
-  vec3 directSun = vec3(1.95, 1.54, 0.92) * sunFacing;
-  vec3 translucency = albedo * vec3(1.65, 1.45, 0.42) * sss * 1.15;
+  vec3 skyAmbient = vec3(0.14, 0.18, 0.16) * (0.35 + 0.65 * vHeightT) * gorgeSkyAo;
+  vec3 directSun = vec3(2.2, 1.72, 0.98) * sunFacing;
+  vec3 translucency = albedo * vec3(1.8, 1.55, 0.35) * sss * 1.1;
 
   vec3 color = albedo * (skyAmbient + directSun) + translucency;
 
   vec3 toFrag = vWorldPos - cameraPosition;
   float dist = length(toFrag);
   vec3 rayDir = toFrag / max(dist, 0.0001);
-  float fogDensity = 0.0046;
-  float fogFactor = clamp(1.0 - exp(-pow(dist * fogDensity, 1.38)), 0.0, 0.78);
+  float fogFactor = clamp(1.0 - exp(-pow(dist * 0.0022, 1.35)), 0.0, 0.52);
   float sunAlign = max(dot(rayDir, sunDir), 0.0);
-  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.84);
+  vec3 fogColor = mix(uFogCool, uFogWarm, pow(sunAlign, 2.2) * 0.55);
   color = mix(color, fogColor, fogFactor);
 
   gl_FragColor = vec4(color, 1.0);
 }
 `;
 
-function createAutumnLeafClusterTexture(anisotropy: number): THREE.CanvasTexture {
-  const size = 512;
+function dilateTransparentRgb(options: {
+  readonly ctx: CanvasRenderingContext2D;
+  readonly size: number;
+  readonly passes: number;
+  readonly fallbackRgb: readonly [number, number, number];
+}): void {
+  const { ctx, size, passes, fallbackRgb } = options;
+  const img = ctx.getImageData(0, 0, size, size);
+  const data = img.data;
+  const count = size * size;
+  let valid = new Uint8Array(count);
+
+  for (let i = 0; i < count; i++) {
+    const a = data[i * 4 + 3] ?? 0;
+    valid[i] = a > 18 ? 1 : 0;
+  }
+
+  for (let pass = 0; pass < passes; pass++) {
+    const nextData = new Uint8ClampedArray(data);
+    const nextValid = new Uint8Array(valid);
+
+    for (let y = 1; y < size - 1; y++) {
+      for (let x = 1; x < size - 1; x++) {
+        const idx = y * size + x;
+        if (valid[idx] === 1) {
+          continue;
+        }
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let hits = 0;
+
+        const neighbors = [idx - 1, idx + 1, idx - size, idx + size];
+        for (const nIdx of neighbors) {
+          if (valid[nIdx] === 1) {
+            const p = nIdx * 4;
+            sumR += data[p] ?? 0;
+            sumG += data[p + 1] ?? 0;
+            sumB += data[p + 2] ?? 0;
+            hits++;
+          }
+        }
+        if (hits > 0) {
+          const p = idx * 4;
+          nextData[p] = Math.round(sumR / hits);
+          nextData[p + 1] = Math.round(sumG / hits);
+          nextData[p + 2] = Math.round(sumB / hits);
+          nextValid[idx] = 1;
+        }
+      }
+    }
+
+    data.set(nextData);
+    valid = nextValid;
+  }
+
+  for (let i = 0; i < count; i++) {
+    if (valid[i] === 0) {
+      const p = i * 4;
+      data[p] = fallbackRgb[0];
+      data[p + 1] = fallbackRgb[1];
+      data[p + 2] = fallbackRgb[2];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function createAutumnBoughAtlasTexture(options: {
+  readonly size: number;
+  readonly anisotropy: number;
+}): THREE.CanvasTexture {
+  const { size } = options;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   const rand = createSeededRandom(314159);
+  const scale = size / 1024;
 
   if (ctx) {
     ctx.clearRect(0, 0, size, size);
 
-    ctx.strokeStyle = 'rgba(54, 34, 22, 0.92)';
-    ctx.lineCap = 'round';
-    for (let t = 0; t < 7; t++) {
-      const startX = size * (0.44 + (rand() - 0.5) * 0.18);
-      const startY = size * (0.86 + (rand() - 0.5) * 0.08);
-      const angle = -Math.PI * 0.5 + (rand() - 0.5) * 1.45;
-      const len = size * (0.34 + rand() * 0.34);
-      ctx.lineWidth = 3.5 + rand() * 2.5;
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.quadraticCurveTo(
-        startX + Math.cos(angle + 0.15) * len * 0.5,
-        startY + Math.sin(angle + 0.15) * len * 0.5,
-        startX + Math.cos(angle) * len,
-        startY + Math.sin(angle) * len,
-      );
-      ctx.stroke();
+    interface TwigTip {
+      readonly x: number;
+      readonly y: number;
+      readonly angle: number;
     }
 
-    const drawMapleLeaf = (leaf: {
+    const tips: TwigTip[] = [];
+    const drawTwig = (twig: {
+      readonly x0: number;
+      readonly y0: number;
+      readonly angle: number;
+      readonly length: number;
+      readonly width: number;
+      readonly depth: number;
+    }): void => {
+      const x1 = twig.x0 + Math.cos(twig.angle) * twig.length;
+      const y1 = twig.y0 + Math.sin(twig.angle) * twig.length;
+      const midX = (twig.x0 + x1) * 0.5 + (rand() - 0.5) * twig.length * 0.16;
+      const midY = (twig.y0 + y1) * 0.5 + (rand() - 0.5) * twig.length * 0.16;
+
+      ctx.strokeStyle = 'rgba(42, 28, 18, 0.96)';
+      ctx.lineWidth = twig.width;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(twig.x0, twig.y0);
+      ctx.quadraticCurveTo(midX, midY, x1, y1);
+      ctx.stroke();
+
+      tips.push({ x: midX, y: midY, angle: twig.angle });
+      tips.push({ x: x1, y: y1, angle: twig.angle });
+
+      if (twig.depth > 0) {
+        const branches = twig.depth === 2 ? 4 : 3;
+        for (let b = 0; b < branches; b++) {
+          const t = 0.35 + (b / Math.max(branches - 1, 1)) * 0.62;
+          const ox = twig.x0 + (x1 - twig.x0) * t;
+          const oy = twig.y0 + (y1 - twig.y0) * t;
+          const side = b % 2 === 0 ? -1 : 1;
+          const nextAngle = twig.angle + side * (0.42 + rand() * 0.45);
+          drawTwig({
+            x0: ox,
+            y0: oy,
+            angle: nextAngle,
+            length: twig.length * (0.48 + rand() * 0.24),
+            width: Math.max(1.4 * scale, twig.width * 0.58),
+            depth: twig.depth - 1,
+          });
+        }
+      }
+    };
+
+    drawTwig({
+      x0: size * 0.5,
+      y0: size * 0.94,
+      angle: -Math.PI * 0.5 + (rand() - 0.5) * 0.14,
+      length: size * 0.62,
+      width: 6.5 * scale,
+      depth: 2,
+    });
+
+    const drawFineDeciduousLeaf = (leaf: {
       readonly cx: number;
       readonly cy: number;
-      readonly radius: number;
-      readonly rotation: number;
-      readonly brightness: number;
+      readonly len: number;
+      readonly wid: number;
+      readonly rot: number;
+      readonly shade: number;
       readonly warmShift: number;
     }): void => {
       ctx.save();
       ctx.translate(leaf.cx, leaf.cy);
-      ctx.rotate(leaf.rotation);
+      ctx.rotate(leaf.rot);
 
-      const r = Math.min(255, Math.round(248 * leaf.brightness));
-      const g = Math.min(255, Math.round((242 - leaf.warmShift * 18) * leaf.brightness));
-      const b = Math.min(255, Math.round((212 - leaf.warmShift * 26) * leaf.brightness));
+      const r = Math.min(255, Math.round(248 * leaf.shade));
+      const g = Math.min(255, Math.round((238 - leaf.warmShift * 34) * leaf.shade));
+      const b = Math.min(255, Math.round((192 - leaf.warmShift * 42) * leaf.shade));
 
-      const grad = ctx.createRadialGradient(0, -leaf.radius * 0.15, 2, 0, 0, leaf.radius * 1.05);
+      const grad = ctx.createLinearGradient(0, leaf.len * 0.45, 0, -leaf.len * 0.55);
       grad.addColorStop(
         0,
-        `rgb(${Math.min(255, r + 24)}, ${Math.min(255, g + 18)}, ${Math.min(255, b + 10)})`,
+        `rgb(${Math.round(r * 0.72)}, ${Math.round(g * 0.68)}, ${Math.round(b * 0.62)})`,
       );
-      grad.addColorStop(0.75, `rgb(${r}, ${g}, ${b})`);
+      grad.addColorStop(0.55, `rgb(${r}, ${g}, ${b})`);
       grad.addColorStop(
         1,
-        `rgb(${Math.round(r * 0.72)}, ${Math.round(g * 0.65)}, ${Math.round(b * 0.58)})`,
+        `rgb(${Math.min(255, r + 14)}, ${Math.min(255, g + 10)}, ${Math.min(255, b + 6)})`,
       );
 
       ctx.fillStyle = grad;
       ctx.beginPath();
-      const lobes = 5;
-      const lobeAngles = [-1.42, -0.76, 0, 0.76, 1.42];
-      const lobeLengths = [0.68, 0.92, 1.06, 0.92, 0.68];
-      ctx.moveTo(0, leaf.radius * 0.34);
-
-      for (let i = 0; i < lobes; i++) {
-        const a = (lobeAngles[i] ?? 0) - Math.PI * 0.5;
-        const len = leaf.radius * (lobeLengths[i] ?? 0.85);
-        const sideL = a - 0.24;
-        const sideR = a + 0.24;
-        ctx.lineTo(Math.cos(sideL) * len * 0.56, Math.sin(sideL) * len * 0.56);
-        ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
-        ctx.lineTo(Math.cos(sideR) * len * 0.56, Math.sin(sideR) * len * 0.56);
-      }
+      ctx.moveTo(0, leaf.len * 0.45);
+      ctx.bezierCurveTo(
+        -leaf.wid * 0.92,
+        leaf.len * 0.22,
+        -leaf.wid * 0.85,
+        -leaf.len * 0.22,
+        -leaf.wid * 0.34,
+        -leaf.len * 0.36,
+      );
+      ctx.lineTo(-leaf.wid * 0.52, -leaf.len * 0.42);
+      ctx.lineTo(0, -leaf.len * 0.72);
+      ctx.lineTo(leaf.wid * 0.52, -leaf.len * 0.42);
+      ctx.lineTo(leaf.wid * 0.34, -leaf.len * 0.36);
+      ctx.bezierCurveTo(
+        leaf.wid * 0.85,
+        -leaf.len * 0.22,
+        leaf.wid * 0.92,
+        leaf.len * 0.22,
+        0,
+        leaf.len * 0.45,
+      );
       ctx.closePath();
       ctx.fill();
 
-      ctx.strokeStyle = `rgba(${Math.round(r * 0.52)}, ${Math.round(g * 0.44)}, ${Math.round(b * 0.32)}, 0.55)`;
-      ctx.lineWidth = 1.4;
-      for (let i = 0; i < lobes; i++) {
-        const a = (lobeAngles[i] ?? 0) - Math.PI * 0.5;
-        const len = leaf.radius * (lobeLengths[i] ?? 0.85) * 0.82;
-        ctx.beginPath();
-        ctx.moveTo(0, leaf.radius * 0.12);
-        ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len);
-        ctx.stroke();
-      }
+      ctx.strokeStyle = `rgba(${Math.round(r * 0.48)}, ${Math.round(g * 0.4)}, ${Math.round(b * 0.28)}, 0.5)`;
+      ctx.lineWidth = Math.max(0.9, 1.1 * scale);
+      ctx.beginPath();
+      ctx.moveTo(0, leaf.len * 0.42);
+      ctx.lineTo(0, -leaf.len * 0.58);
+      ctx.stroke();
 
       ctx.restore();
     };
 
-    const leafCount = 58;
-    for (let i = 0; i < leafCount; i++) {
-      const angle = rand() * Math.PI * 2;
-      const dist = Math.sqrt(rand()) * size * 0.36;
-      const cx = size * 0.5 + Math.cos(angle) * dist;
-      const cy = size * 0.5 + Math.sin(angle) * dist * 0.95;
-      const radius = 26 + rand() * 28;
-      const brightness = 0.68 + (i / leafCount) * 0.36;
-      drawMapleLeaf({
+    const totalLeaves = 225;
+    for (let i = 0; i < totalLeaves; i++) {
+      const anchor = tips[i % tips.length] ?? { x: size * 0.5, y: size * 0.5, angle: -Math.PI / 2 };
+      const scatterR = (16 + rand() * 88) * scale;
+      const scatterA = rand() * Math.PI * 2;
+      const cx = Math.min(
+        size - 28 * scale,
+        Math.max(28 * scale, anchor.x + Math.cos(scatterA) * scatterR),
+      );
+      const cy = Math.min(
+        size - 28 * scale,
+        Math.max(28 * scale, anchor.y + Math.sin(scatterA) * scatterR),
+      );
+      const len = (24 + rand() * 26) * scale;
+      const wid = len * (0.62 + rand() * 0.34);
+      const shade = 0.62 + (i / totalLeaves) * 0.42;
+
+      drawFineDeciduousLeaf({
         cx,
         cy,
-        radius,
-        rotation: angle + Math.PI * 0.5 + (rand() - 0.5) * 0.9,
-        brightness,
+        len,
+        wid,
+        rot: anchor.angle + Math.PI * 0.5 + (rand() - 0.5) * 1.9,
+        shade,
         warmShift: rand(),
       });
     }
+
+    dilateTransparentRgb({
+      ctx,
+      size,
+      passes: 4,
+      fallbackRgb: [224, 198, 132],
+    });
   }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = anisotropy;
+  texture.anisotropy = options.anisotropy;
   texture.generateMipmaps = true;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
@@ -351,18 +491,22 @@ function createAutumnLeafClusterTexture(anisotropy: number): THREE.CanvasTexture
   return texture;
 }
 
-function createConiferBoughTexture(anisotropy: number): THREE.CanvasTexture {
-  const size = 512;
+function createConiferSprigAtlasTexture(options: {
+  readonly size: number;
+  readonly anisotropy: number;
+}): THREE.CanvasTexture {
+  const { size } = options;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   const rand = createSeededRandom(271828);
+  const scale = size / 1024;
 
   if (ctx) {
     ctx.clearRect(0, 0, size, size);
 
-    const drawSprig = (sprig: {
+    const drawNeedleSprig = (sprig: {
       readonly x0: number;
       readonly y0: number;
       readonly angle: number;
@@ -375,91 +519,91 @@ function createConiferBoughTexture(anisotropy: number): THREE.CanvasTexture {
       const x1 = sprig.x0 + cosA * sprig.length;
       const y1 = sprig.y0 + sinA * sprig.length;
 
-      const coreSteps = Math.max(10, Math.floor(sprig.length * 0.24));
-      for (let s = 0; s <= coreSteps; s++) {
-        const t = s / coreSteps;
-        const bx = sprig.x0 + cosA * sprig.length * t;
-        const by = sprig.y0 + sinA * sprig.length * t;
-        const plumeRadius = sprig.needleLen * (0.68 - t * 0.36) * (0.85 + rand() * 0.3);
-        const r = Math.round((58 + rand() * 24) * sprig.shade);
-        const g = Math.round((112 + rand() * 38) * sprig.shade);
-        const b = Math.round((64 + rand() * 20) * sprig.shade);
-        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-        ctx.beginPath();
-        ctx.ellipse(
-          bx,
-          by,
-          plumeRadius * 0.95,
-          plumeRadius * 0.65,
-          sprig.angle + (rand() - 0.5) * 0.4,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-      }
-
-      ctx.strokeStyle = 'rgba(56, 44, 30, 0.95)';
-      ctx.lineWidth = 4.2;
+      ctx.strokeStyle = 'rgba(54, 42, 30, 0.96)';
+      ctx.lineWidth = Math.max(1.8, 3.8 * scale);
+      ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(sprig.x0, sprig.y0);
       ctx.lineTo(x1, y1);
       ctx.stroke();
 
-      const steps = Math.floor(sprig.length * 0.48);
+      const steps = Math.max(18, Math.floor(sprig.length * 0.36));
       for (let s = 1; s < steps; s++) {
         const t = s / steps;
         const bx = sprig.x0 + cosA * sprig.length * t;
         const by = sprig.y0 + sinA * sprig.length * t;
-        const taper = 1.0 - t * 0.44;
+        const taper = 1.0 - t * 0.52;
 
         for (const side of [-1, 1]) {
-          const nAngle = sprig.angle + side * (0.58 + (rand() - 0.5) * 0.3);
-          const nLen = sprig.needleLen * taper * (0.85 + rand() * 0.48);
-          const r = Math.round((70 + rand() * 30) * sprig.shade);
-          const g = Math.round((132 + rand() * 44) * sprig.shade);
-          const b = Math.round((72 + rand() * 22) * sprig.shade);
-          ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
-          ctx.lineWidth = 4.8 + rand() * 2.6;
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.moveTo(bx, by);
-          ctx.lineTo(bx + Math.cos(nAngle) * nLen, by + Math.sin(nAngle) * nLen);
-          ctx.stroke();
+          for (let layer = 0; layer < 2; layer++) {
+            const nAngle = sprig.angle + side * (0.48 + layer * 0.24 + (rand() - 0.5) * 0.24);
+            const nLen = sprig.needleLen * taper * (0.68 + rand() * 0.52);
+            const shadeMix = sprig.shade * (layer === 0 ? 0.82 : 1.08);
+            const r = Math.min(255, Math.round((78 + rand() * 24) * shadeMix));
+            const g = Math.min(255, Math.round((132 + rand() * 34) * shadeMix));
+            const b = Math.min(255, Math.round((86 + rand() * 20) * shadeMix));
+            ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            ctx.lineWidth = (2.8 + rand() * 1.8) * scale;
+            ctx.beginPath();
+            ctx.moveTo(bx, by);
+            ctx.lineTo(bx + Math.cos(nAngle) * nLen, by + Math.sin(nAngle) * nLen);
+            ctx.stroke();
+          }
         }
       }
     };
 
-    drawSprig({
+    drawNeedleSprig({
       x0: size * 0.5,
-      y0: size * 0.94,
+      y0: size * 0.95,
       angle: -Math.PI * 0.5,
-      length: size * 0.84,
-      needleLen: 46,
-      shade: 0.96,
+      length: size * 0.86,
+      needleLen: 46 * scale,
+      shade: 0.95,
     });
 
-    const subBranches = 18;
-    for (let i = 0; i < subBranches; i++) {
-      const t = 0.1 + (i / subBranches) * 0.78;
+    const lateralBranches = 22;
+    for (let i = 0; i < lateralBranches; i++) {
+      const t = 0.08 + (i / lateralBranches) * 0.82;
       const side = i % 2 === 0 ? -1 : 1;
-      const originY = size * (0.9 - t * 0.74);
-      const originX = size * 0.5 + side * (4 + rand() * 8);
-      const spread = side * (0.44 + (1 - t) * 0.54 + (rand() - 0.5) * 0.16);
-      const len = size * (0.28 + (1 - t) * 0.26) * (0.85 + rand() * 0.3);
-      drawSprig({
+      const originY = size * (0.93 - t * 0.78);
+      const originX = size * 0.5 + side * (4 + rand() * 10) * scale;
+      const spread = side * (0.46 + (1 - t) * 0.58 + (rand() - 0.5) * 0.16);
+      const len = size * (0.18 + (1 - t) * 0.28) * (0.82 + rand() * 0.32);
+      drawNeedleSprig({
         x0: originX,
         y0: originY,
         angle: -Math.PI * 0.5 + spread,
         length: len,
-        needleLen: 30 + (1 - t) * 18,
-        shade: 0.78 + t * 0.4,
+        needleLen: (22 + (1 - t) * 18) * scale,
+        shade: 0.78 + t * 0.34,
       });
+
+      if (t < 0.7) {
+        const subX = originX + Math.cos(-Math.PI * 0.5 + spread) * len * 0.55;
+        const subY = originY + Math.sin(-Math.PI * 0.5 + spread) * len * 0.55;
+        drawNeedleSprig({
+          x0: subX,
+          y0: subY,
+          angle: -Math.PI * 0.5 + spread + side * 0.35,
+          length: len * 0.52,
+          needleLen: 20 * scale,
+          shade: 0.85 + t * 0.28,
+        });
+      }
     }
+
+    dilateTransparentRgb({
+      ctx,
+      size,
+      passes: 4,
+      fallbackRgb: [72, 118, 78],
+    });
   }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = anisotropy;
+  texture.anisotropy = options.anisotropy;
   texture.generateMipmaps = true;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
@@ -530,13 +674,15 @@ function appendTaperedTube(options: {
   }
 }
 
-function appendCuppedFoliageCard(options: {
+function appendVolumetricFoliageCard(options: {
   readonly positions: number[];
   readonly normals: number[];
   readonly uvs: number[];
   readonly shades: number[];
   readonly indices: number[];
   readonly center: THREE.Vector3;
+  readonly crownCenter: THREE.Vector3;
+  readonly lobeCenter: THREE.Vector3;
   readonly width: number;
   readonly height: number;
   readonly yaw: number;
@@ -549,15 +695,15 @@ function appendCuppedFoliageCard(options: {
   );
   const hw = options.width * 0.5;
   const hh = options.height * 0.5;
-  const cup = Math.min(hw, hh) * 0.24;
+  const cup = Math.min(hw, hh) * 0.26;
 
   const localPts = [
     new THREE.Vector3(-hw, -hh, -cup),
-    new THREE.Vector3(0, -hh, cup * 0.5),
+    new THREE.Vector3(0, -hh, cup * 0.45),
     new THREE.Vector3(hw, -hh, -cup),
-    new THREE.Vector3(-hw, hh, -cup * 0.6),
-    new THREE.Vector3(0, hh, cup * 0.7),
-    new THREE.Vector3(hw, hh, -cup * 0.6),
+    new THREE.Vector3(-hw, hh, -cup * 0.55),
+    new THREE.Vector3(0, hh, cup * 0.65),
+    new THREE.Vector3(hw, hh, -cup * 0.55),
   ];
   const localUvs: readonly (readonly [number, number])[] = [
     [0, 0],
@@ -578,8 +724,28 @@ function appendCuppedFoliageCard(options: {
       continue;
     }
     const wp = p.clone().applyQuaternion(quat).add(options.center);
+
+    const fromCrown = wp.clone().sub(options.crownCenter);
+    if (fromCrown.lengthSq() > 0.0001) {
+      fromCrown.normalize();
+    } else {
+      fromCrown.set(0, 1, 0);
+    }
+    const fromLobe = wp.clone().sub(options.lobeCenter);
+    if (fromLobe.lengthSq() > 0.0001) {
+      fromLobe.normalize();
+    } else {
+      fromLobe.set(0, 1, 0);
+    }
+
+    const proxyNormal = fromCrown
+      .multiplyScalar(0.38)
+      .addScaledVector(fromLobe, 0.52)
+      .addScaledVector(cardNorm, 0.16)
+      .normalize();
+
     options.positions.push(wp.x, wp.y, wp.z);
-    options.normals.push(cardNorm.x, cardNorm.y, cardNorm.z);
+    options.normals.push(proxyNormal.x, proxyNormal.y, proxyNormal.z);
     options.uvs.push(uv[0], uv[1]);
     options.shades.push(options.shade);
   }
@@ -600,11 +766,19 @@ function appendCuppedFoliageCard(options: {
   );
 }
 
-function createDeciduousTreeArchetype(seed: number): {
+interface TreeArchetype {
   readonly woodGeo: THREE.BufferGeometry;
   readonly foliageGeo: THREE.BufferGeometry;
-} {
-  const rand = createSeededRandom(seed);
+}
+
+function createDeciduousArchetype(options: {
+  readonly seed: number;
+  readonly leanX: number;
+  readonly crownSpread: number;
+  readonly lobeCount: number;
+  readonly trunkRadius: number;
+}): TreeArchetype {
+  const rand = createSeededRandom(options.seed);
   const wPos: number[] = [];
   const wNorm: number[] = [];
   const wUv: number[] = [];
@@ -618,17 +792,22 @@ function createDeciduousTreeArchetype(seed: number): {
 
   const trunkPts = [
     new THREE.Vector3(0, -0.28, 0),
-    new THREE.Vector3((rand() - 0.5) * 0.04, 0.22, (rand() - 0.5) * 0.04),
-    new THREE.Vector3((rand() - 0.5) * 0.06, 0.48, (rand() - 0.5) * 0.06),
-    new THREE.Vector3((rand() - 0.5) * 0.07, 0.76, (rand() - 0.5) * 0.07),
+    new THREE.Vector3(options.leanX * 0.24, 0.18, (rand() - 0.5) * 0.03),
+    new THREE.Vector3(options.leanX * 0.58 + (rand() - 0.5) * 0.04, 0.44, (rand() - 0.5) * 0.05),
+    new THREE.Vector3(options.leanX * 0.88 + (rand() - 0.5) * 0.05, 0.72, (rand() - 0.5) * 0.05),
   ];
-  const trunkRadii = [0.062, 0.036, 0.026, 0.014];
+  const trunkRadii = [
+    options.trunkRadius * 1.45,
+    options.trunkRadius,
+    options.trunkRadius * 0.7,
+    options.trunkRadius * 0.34,
+  ];
 
   for (let i = 0; i < trunkPts.length - 1; i++) {
     const p0 = trunkPts[i];
     const p1 = trunkPts[i + 1];
-    const r0 = trunkRadii[i] ?? 0.03;
-    const r1 = trunkRadii[i + 1] ?? 0.015;
+    const r0 = trunkRadii[i] ?? 0.024;
+    const r1 = trunkRadii[i + 1] ?? 0.012;
     if (!p0 || !p1) {
       continue;
     }
@@ -642,29 +821,34 @@ function createDeciduousTreeArchetype(seed: number): {
       radiusStart: r0,
       radiusEnd: r1,
       radialSegments: 6,
-      vScale: 4.5,
+      vScale: 5.5,
     });
   }
 
-  const crownAnchors: Array<{ readonly pos: THREE.Vector3; readonly heightFactor: number }> = [];
-  const primaryBranchCount = 8;
+  const crownCenter = new THREE.Vector3(options.leanX * 0.8, 0.64, 0);
+  const lobes: Array<{
+    readonly center: THREE.Vector3;
+    readonly radius: number;
+    readonly heightT: number;
+  }> = [];
 
-  for (let b = 0; b < primaryBranchCount; b++) {
-    const tHeight = 0.34 + (b / (primaryBranchCount - 1)) * 0.44;
-    const yaw = (b / primaryBranchCount) * Math.PI * 2 + (rand() - 0.5) * 0.45;
-    const spread = 0.22 + (1 - Math.abs(tHeight - 0.56) * 1.4) * 0.16 + rand() * 0.08;
-    const rise = 0.15 + rand() * 0.15;
+  for (let b = 0; b < options.lobeCount; b++) {
+    const tHeight = 0.36 + (b / Math.max(options.lobeCount - 1, 1)) * 0.42;
+    const yaw = (b / options.lobeCount) * Math.PI * 2 + (rand() - 0.5) * 0.55;
+    const spread = options.crownSpread * (0.62 + (1 - Math.abs(tHeight - 0.58) * 1.5) * 0.48);
+    const rise = 0.14 + rand() * 0.16;
 
-    const start = new THREE.Vector3(0, tHeight, 0);
+    const originX = options.leanX * tHeight;
+    const start = new THREE.Vector3(originX, tHeight, 0);
     const mid = new THREE.Vector3(
-      Math.cos(yaw) * spread * 0.55,
+      originX + Math.cos(yaw) * spread * 0.52,
       tHeight + rise * 0.55,
-      Math.sin(yaw) * spread * 0.55,
+      Math.sin(yaw) * spread * 0.52,
     );
     const tip = new THREE.Vector3(
-      Math.cos(yaw + (rand() - 0.5) * 0.25) * spread,
+      originX + Math.cos(yaw + (rand() - 0.5) * 0.3) * spread,
       tHeight + rise,
-      Math.sin(yaw + (rand() - 0.5) * 0.25) * spread,
+      Math.sin(yaw + (rand() - 0.5) * 0.3) * spread,
     );
 
     appendTaperedTube({
@@ -674,10 +858,10 @@ function createDeciduousTreeArchetype(seed: number): {
       indices: wIdx,
       start,
       end: mid,
-      radiusStart: 0.018 * (1 - tHeight * 0.35),
-      radiusEnd: 0.011,
+      radiusStart: options.trunkRadius * 0.45,
+      radiusEnd: options.trunkRadius * 0.25,
       radialSegments: 5,
-      vScale: 5.0,
+      vScale: 5.5,
     });
     appendTaperedTube({
       positions: wPos,
@@ -686,22 +870,24 @@ function createDeciduousTreeArchetype(seed: number): {
       indices: wIdx,
       start: mid,
       end: tip,
-      radiusStart: 0.011,
-      radiusEnd: 0.005,
+      radiusStart: options.trunkRadius * 0.25,
+      radiusEnd: options.trunkRadius * 0.1,
       radialSegments: 4,
-      vScale: 5.0,
+      vScale: 5.5,
     });
 
-    crownAnchors.push({ pos: mid, heightFactor: tHeight });
-    crownAnchors.push({ pos: tip, heightFactor: Math.min(1, tHeight + 0.18) });
+    lobes.push({
+      center: tip,
+      radius: 0.12 + rand() * 0.07,
+      heightT: Math.min(1, tip.y),
+    });
 
-    for (let sub = 0; sub < 2; sub++) {
-      const subYaw = yaw + (sub === 0 ? -0.6 : 0.6) + (rand() - 0.5) * 0.35;
-      const subLen = 0.11 + rand() * 0.1;
+    if (b % 2 === 0) {
+      const subYaw = yaw + (rand() > 0.5 ? 0.65 : -0.65);
       const subTip = new THREE.Vector3(
-        mid.x + Math.cos(subYaw) * subLen,
-        mid.y + 0.07 + rand() * 0.09,
-        mid.z + Math.sin(subYaw) * subLen,
+        mid.x + Math.cos(subYaw) * spread * 0.48,
+        mid.y + 0.08 + rand() * 0.08,
+        mid.z + Math.sin(subYaw) * spread * 0.48,
       );
       appendTaperedTube({
         positions: wPos,
@@ -710,42 +896,58 @@ function createDeciduousTreeArchetype(seed: number): {
         indices: wIdx,
         start: mid,
         end: subTip,
-        radiusStart: 0.008,
-        radiusEnd: 0.003,
+        radiusStart: options.trunkRadius * 0.2,
+        radiusEnd: options.trunkRadius * 0.08,
         radialSegments: 4,
-        vScale: 5.0,
+        vScale: 5.5,
       });
-      crownAnchors.push({ pos: subTip, heightFactor: Math.min(1, subTip.y) });
+      lobes.push({
+        center: subTip,
+        radius: 0.1 + rand() * 0.06,
+        heightT: Math.min(1, subTip.y),
+      });
     }
   }
 
-  crownAnchors.push({ pos: new THREE.Vector3(0, 0.88, 0), heightFactor: 0.96 });
-  crownAnchors.push({ pos: new THREE.Vector3(0.06, 0.96, -0.04), heightFactor: 1.0 });
-  crownAnchors.push({ pos: new THREE.Vector3(-0.07, 0.93, 0.05), heightFactor: 0.98 });
+  lobes.push({
+    center: new THREE.Vector3(options.leanX * 0.92, 0.9, 0),
+    radius: 0.15,
+    heightT: 0.96,
+  });
 
-  for (const anchor of crownAnchors) {
-    const cardsPerCluster = 3;
-    for (let c = 0; c < cardsPerCluster; c++) {
+  for (const lobe of lobes) {
+    const cardsInLobe = 9;
+    for (let c = 0; c < cardsInLobe; c++) {
+      const phi = Math.acos(1 - 2 * ((c + 0.5) / cardsInLobe));
+      const theta = c * 2.39996 + rand() * 0.6;
+      const dist = lobe.radius * (0.35 + rand() * 0.72);
       const offset = new THREE.Vector3(
-        (rand() - 0.5) * 0.16,
-        (rand() - 0.5) * 0.12,
-        (rand() - 0.5) * 0.16,
+        Math.sin(phi) * Math.cos(theta) * dist,
+        Math.cos(phi) * dist * 0.78,
+        Math.sin(phi) * Math.sin(theta) * dist,
       );
-      const cardCenter = anchor.pos.clone().add(offset);
-      const cardSize = 0.24 + rand() * 0.14;
-      const shade = Math.min(1, Math.max(0.18, anchor.heightFactor * 0.85 + rand() * 0.22));
-      appendCuppedFoliageCard({
+      const cardCenter = lobe.center.clone().add(offset);
+      const cardSize = 0.095 + rand() * 0.055;
+      const radialFactor = Math.min(1, dist / Math.max(lobe.radius, 0.01));
+      const shade = Math.min(
+        1,
+        Math.max(0.14, lobe.heightT * 0.68 + radialFactor * 0.34 + (offset.y > 0 ? 0.14 : -0.1)),
+      );
+
+      appendVolumetricFoliageCard({
         positions: fPos,
         normals: fNorm,
         uvs: fUv,
         shades: fShade,
         indices: fIdx,
         center: cardCenter,
+        crownCenter,
+        lobeCenter: lobe.center,
         width: cardSize,
         height: cardSize * (0.9 + rand() * 0.22),
-        yaw: (c / cardsPerCluster) * Math.PI + rand() * 0.9,
-        pitch: (rand() - 0.5) * 0.85,
-        roll: (rand() - 0.5) * 0.65,
+        yaw: theta + rand() * 0.8,
+        pitch: (rand() - 0.5) * 0.95,
+        roll: (rand() - 0.5) * 0.75,
         shade,
       });
     }
@@ -767,10 +969,7 @@ function createDeciduousTreeArchetype(seed: number): {
   return { woodGeo, foliageGeo };
 }
 
-function createConiferArchetype(seed: number): {
-  readonly trunkGeo: THREE.BufferGeometry;
-  readonly boughGeo: THREE.BufferGeometry;
-} {
+function createDouglasFirArchetype(seed: number): TreeArchetype {
   const rand = createSeededRandom(seed);
   const wPos: number[] = [];
   const wNorm: number[] = [];
@@ -782,12 +981,12 @@ function createConiferArchetype(seed: number): {
     normals: wNorm,
     uvs: wUv,
     indices: wIdx,
-    start: new THREE.Vector3(0, -0.25, 0),
-    end: new THREE.Vector3(0, 0.92, 0),
-    radiusStart: 0.052,
-    radiusEnd: 0.006,
+    start: new THREE.Vector3(0, -0.24, 0),
+    end: new THREE.Vector3(0, 0.96, 0),
+    radiusStart: 0.024,
+    radiusEnd: 0.003,
     radialSegments: 6,
-    vScale: 6.0,
+    vScale: 7.5,
   });
 
   const fPos: number[] = [];
@@ -796,50 +995,55 @@ function createConiferArchetype(seed: number): {
   const fShade: number[] = [];
   const fIdx: number[] = [];
 
-  const tierCount = 11;
+  const crownCenter = new THREE.Vector3(0, 0.58, 0);
+  const tierCount = 18;
   for (let t = 0; t < tierCount; t++) {
     const ratio = t / (tierCount - 1);
     const y = 0.2 + ratio * 0.76;
-    const boughsInTier = ratio > 0.78 ? 3 : 4;
-    const tierRadius = 0.24 * (1 - ratio * 0.78) + 0.03;
+    const boughsInTier = ratio > 0.8 ? 3 : 4;
+    const tierRadius = 0.145 * (1 - ratio * 0.8) + 0.018;
 
     for (let b = 0; b < boughsInTier; b++) {
-      const yaw = (b / boughsInTier) * Math.PI * 2 + t * 0.92 + (rand() - 0.5) * 0.3;
-      const dist = tierRadius * (0.45 + rand() * 0.25);
+      const yaw = (b / boughsInTier) * Math.PI * 2 + t * 1.15 + (rand() - 0.5) * 0.35;
+      const dist = tierRadius * (0.48 + rand() * 0.28);
       const center = new THREE.Vector3(
         Math.cos(yaw) * dist,
-        y - 0.025 * (1 - ratio),
+        y - 0.015 * (1 - ratio),
         Math.sin(yaw) * dist,
       );
-      const width = tierRadius * (1.28 + rand() * 0.34);
-      const height = 0.14 + (1 - ratio) * 0.16;
-      appendCuppedFoliageCard({
+      const width = tierRadius * (1.1 + rand() * 0.28);
+      const height = 0.068 + (1 - ratio) * 0.065;
+      appendVolumetricFoliageCard({
         positions: fPos,
         normals: fNorm,
         uvs: fUv,
         shades: fShade,
         indices: fIdx,
         center,
+        crownCenter,
+        lobeCenter: new THREE.Vector3(0, y, 0),
         width,
         height,
         yaw: yaw + Math.PI * 0.5,
-        pitch: 0.52 + (1 - ratio) * 0.38 + (rand() - 0.5) * 0.18,
+        pitch: 0.52 + (1 - ratio) * 0.32 + (rand() - 0.5) * 0.18,
         roll: (rand() - 0.5) * 0.22,
-        shade: 0.25 + ratio * 0.75,
+        shade: 0.2 + ratio * 0.8,
       });
     }
   }
 
   for (let s = 0; s < 3; s++) {
-    appendCuppedFoliageCard({
+    appendVolumetricFoliageCard({
       positions: fPos,
       normals: fNorm,
       uvs: fUv,
       shades: fShade,
       indices: fIdx,
-      center: new THREE.Vector3(0, 0.94, 0),
-      width: 0.12,
-      height: 0.18,
+      center: new THREE.Vector3(0, 0.96, 0),
+      crownCenter,
+      lobeCenter: new THREE.Vector3(0, 0.92, 0),
+      width: 0.055,
+      height: 0.09,
       yaw: (s / 3) * Math.PI,
       pitch: 0.08,
       roll: 0,
@@ -847,20 +1051,20 @@ function createConiferArchetype(seed: number): {
     });
   }
 
-  const trunkGeo = new THREE.BufferGeometry();
-  trunkGeo.setAttribute('position', new THREE.Float32BufferAttribute(wPos, 3));
-  trunkGeo.setAttribute('normal', new THREE.Float32BufferAttribute(wNorm, 3));
-  trunkGeo.setAttribute('uv', new THREE.Float32BufferAttribute(wUv, 2));
-  trunkGeo.setIndex(wIdx);
+  const woodGeo = new THREE.BufferGeometry();
+  woodGeo.setAttribute('position', new THREE.Float32BufferAttribute(wPos, 3));
+  woodGeo.setAttribute('normal', new THREE.Float32BufferAttribute(wNorm, 3));
+  woodGeo.setAttribute('uv', new THREE.Float32BufferAttribute(wUv, 2));
+  woodGeo.setIndex(wIdx);
 
-  const boughGeo = new THREE.BufferGeometry();
-  boughGeo.setAttribute('position', new THREE.Float32BufferAttribute(fPos, 3));
-  boughGeo.setAttribute('normal', new THREE.Float32BufferAttribute(fNorm, 3));
-  boughGeo.setAttribute('uv', new THREE.Float32BufferAttribute(fUv, 2));
-  boughGeo.setAttribute('aCardShade', new THREE.Float32BufferAttribute(fShade, 1));
-  boughGeo.setIndex(fIdx);
+  const foliageGeo = new THREE.BufferGeometry();
+  foliageGeo.setAttribute('position', new THREE.Float32BufferAttribute(fPos, 3));
+  foliageGeo.setAttribute('normal', new THREE.Float32BufferAttribute(fNorm, 3));
+  foliageGeo.setAttribute('uv', new THREE.Float32BufferAttribute(fUv, 2));
+  foliageGeo.setAttribute('aCardShade', new THREE.Float32BufferAttribute(fShade, 1));
+  foliageGeo.setIndex(fIdx);
 
-  return { trunkGeo, boughGeo };
+  return { woodGeo, foliageGeo };
 }
 
 function createForestGrassTuftGeometry(): THREE.BufferGeometry {
@@ -875,19 +1079,19 @@ function createForestGrassTuftGeometry(): THREE.BufferGeometry {
     const yaw = (b / bladeCount) * Math.PI * 2 + 0.35;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    const heightScale = 0.84 + (b % 2) * 0.26;
-    const lean = 0.2 + b * 0.04;
-    const baseOffsetX = cosY * 0.07;
-    const baseOffsetZ = sinY * 0.07;
+    const heightScale = 0.78 + (b % 2) * 0.24;
+    const lean = 0.18 + b * 0.04;
+    const baseOffsetX = cosY * 0.06;
+    const baseOffsetZ = sinY * 0.06;
 
     const rawPts: readonly (readonly [number, number, number, number, number])[] = [
-      [-0.052, 0.0, 0.0, 0, 0],
-      [0.052, 0.0, 0.0, 1, 0],
-      [-0.04, 0.28 * heightScale, 0.05 * lean, 0, 0.35],
-      [0.04, 0.28 * heightScale, 0.05 * lean, 1, 0.35],
-      [-0.02, 0.58 * heightScale, 0.16 * lean, 0, 0.7],
-      [0.02, 0.58 * heightScale, 0.16 * lean, 1, 0.7],
-      [0.0, 0.86 * heightScale, 0.34 * lean, 0.5, 1.0],
+      [-0.042, 0.0, 0.0, 0, 0],
+      [0.042, 0.0, 0.0, 1, 0],
+      [-0.032, 0.24 * heightScale, 0.045 * lean, 0, 0.35],
+      [0.032, 0.24 * heightScale, 0.045 * lean, 1, 0.35],
+      [-0.016, 0.5 * heightScale, 0.14 * lean, 0, 0.7],
+      [0.016, 0.5 * heightScale, 0.14 * lean, 1, 0.7],
+      [0.0, 0.74 * heightScale, 0.28 * lean, 0.5, 1.0],
     ];
 
     for (const pt of rawPts) {
@@ -928,49 +1132,6 @@ function createForestGrassTuftGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
-function createWallFoliageCushionGeometry(seed: number): THREE.BufferGeometry {
-  const rand = createSeededRandom(seed);
-  const fPos: number[] = [];
-  const fNorm: number[] = [];
-  const fUv: number[] = [];
-  const fShade: number[] = [];
-  const fIdx: number[] = [];
-
-  const cardCount = 11;
-  for (let i = 0; i < cardCount; i++) {
-    const angle = (i / cardCount) * Math.PI * 2 + (rand() - 0.5) * 0.4;
-    const radius = 0.25 + rand() * 0.52;
-    const center = new THREE.Vector3(
-      Math.cos(angle) * radius,
-      (rand() - 0.35) * 0.58,
-      Math.sin(angle) * radius,
-    );
-    const size = 0.95 + rand() * 0.65;
-    appendCuppedFoliageCard({
-      positions: fPos,
-      normals: fNorm,
-      uvs: fUv,
-      shades: fShade,
-      indices: fIdx,
-      center,
-      width: size,
-      height: size * (0.88 + rand() * 0.28),
-      yaw: angle + Math.PI * 0.5 + (rand() - 0.5) * 0.8,
-      pitch: (rand() - 0.5) * 0.95,
-      roll: (rand() - 0.5) * 0.7,
-      shade: 0.35 + (center.y + 0.5) * 0.65,
-    });
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(fPos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(fNorm, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(fUv, 2));
-  geo.setAttribute('aCardShade', new THREE.Float32BufferAttribute(fShade, 1));
-  geo.setIndex(fIdx);
-  return geo;
-}
-
 function normalizeGroundedPlantGeometry(rawGeometry: THREE.BufferGeometry): THREE.BufferGeometry {
   const cloned = rawGeometry.clone();
   cloned.computeBoundingBox();
@@ -1002,6 +1163,8 @@ function loadPhotogrammetryFoliageSet(options: {
   readonly placements: readonly PlantPlacement[];
   readonly group: THREE.Group;
   readonly anisotropy: number;
+  readonly sunDir: THREE.Vector3;
+  readonly isAutumnHueRemap: boolean;
   readonly isDisposed: () => boolean;
   readonly disposables: {
     readonly geometries: THREE.BufferGeometry[];
@@ -1041,22 +1204,89 @@ function loadPhotogrammetryFoliageSet(options: {
       const material =
         rawMat instanceof THREE.MeshStandardMaterial
           ? rawMat.clone()
-          : new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0.02 });
+          : new THREE.MeshStandardMaterial({ roughness: 0.72, metalness: 0.02 });
 
-      material.color.setRGB(1.14, 1.14, 1.08);
+      material.color.setRGB(1, 1, 1);
       material.alphaMap = alphaMap;
       material.alphaTest = 0.42;
       material.transparent = false;
       material.side = THREE.DoubleSide;
       material.roughness = 0.68;
       material.metalness = 0.02;
-      material.envMapIntensity = 1.45;
+      material.envMapIntensity = 0.85;
       if (material.map) {
         material.map.anisotropy = options.anisotropy;
       }
       if (material.normalMap) {
         material.normalMap.anisotropy = options.anisotropy;
       }
+
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uSunDir = { value: options.sunDir };
+        shader.uniforms.uHueRemap = { value: options.isAutumnHueRemap ? 1.0 : 0.0 };
+
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            '#include <common>',
+            /* glsl */ `
+            #include <common>
+            varying vec3 vPlantWPos;
+            `,
+          )
+          .replace(
+            '#include <worldpos_vertex>',
+            /* glsl */ `
+            #include <worldpos_vertex>
+            vec4 plantLPos = vec4(transformed, 1.0);
+            #ifdef USE_INSTANCING
+              plantLPos = instanceMatrix * plantLPos;
+            #endif
+            vPlantWPos = (modelMatrix * plantLPos).xyz;
+            `,
+          );
+
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            /* glsl */ `
+            #include <common>
+            uniform vec3 uSunDir;
+            uniform float uHueRemap;
+            varying vec3 vPlantWPos;
+            `,
+          )
+          .replace(
+            '#include <color_fragment>',
+            /* glsl */ `
+            #ifdef USE_INSTANCING_COLOR
+              if (uHueRemap > 0.5) {
+                float leafLuma = dot(diffuseColor.rgb, vec3(0.22, 0.68, 0.10));
+                vec3 remapped = vColor.rgb * clamp(leafLuma * 2.55, 0.12, 1.45);
+                diffuseColor.rgb = mix(diffuseColor.rgb * 0.85, remapped, 0.88);
+              } else {
+                diffuseColor.rgb *= vColor.rgb;
+              }
+            #endif
+            `,
+          )
+          .replace(
+            '#include <aomap_fragment>',
+            /* glsl */ `
+            #include <aomap_fragment>
+            float pSlotNarrow = 1.0 - smoothstep(6.5, 24.0, abs(vPlantWPos.x));
+            float pDepthInGorge = 1.0 - smoothstep(1.5, 23.0, vPlantWPos.y);
+            float pBackWall = 1.0 - smoothstep(-19.0, 8.0, vPlantWPos.z);
+            float pGorgeAo = mix(1.0, 0.22, pDepthInGorge * (0.55 * pSlotNarrow + 0.45 * pBackWall));
+            reflectedLight.indirectDiffuse *= pGorgeAo;
+            vec3 pViewDir = normalize(cameraPosition - vPlantWPos);
+            float pBacklight = pow(max(dot(-pViewDir, normalize(uSunDir)), 0.0), 2.5);
+            reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.4, 1.0, 0.35) * pBacklight * 0.45 * pGorgeAo;
+            `,
+          );
+      };
+      material.customProgramCacheKey = () =>
+        options.isAutumnHueRemap ? 'forest-shrub-hueremap-v2' : 'forest-fern-gorgeao-v2';
+
       options.disposables.materials.push(material);
 
       const variantCount = Math.min(sourceMeshes.length, 3);
@@ -1115,20 +1345,78 @@ function computeForestSlope(coords: { readonly x: number; readonly z: number }):
 }
 
 const AUTUMN_CANOPY_PALETTE: readonly (readonly [number, number, number])[] = [
-  [1.0, 0.84, 0.04],
-  [1.0, 0.64, 0.03],
-  [0.98, 0.4, 0.03],
-  [0.86, 0.24, 0.04],
-  [0.96, 0.9, 0.08],
-  [0.66, 0.78, 0.08],
-  [0.3, 0.62, 0.1],
+  [1.0, 0.78, 0.04],
+  [1.0, 0.56, 0.03],
+  [0.96, 0.34, 0.03],
+  [0.78, 0.18, 0.04],
+  [0.94, 0.86, 0.08],
+  [0.54, 0.68, 0.08],
+  [0.24, 0.52, 0.1],
 ];
 
 const SHRUB_AUTUMN_PALETTE: readonly number[] = [
-  0xffcb38, 0xf28b22, 0xd9561a, 0xa8be2c, 0x5c8f2b, 0x3b6e28, 0xe8ad2a,
+  0xffbe24, 0xf27d18, 0xd84814, 0x9ab822, 0x3b7622, 0x265418, 0xe89e1c,
 ];
 
-const FERN_PALETTE: readonly number[] = [0x4c852d, 0x3a6e24, 0x6c9632, 0x899a2e, 0x2f5c20];
+const FERN_PALETTE: readonly number[] = [0x4c852d, 0x3a6e24, 0x6c9632, 0x2f5c20, 0x588c28];
+
+interface TreeInstanceSpec {
+  readonly matrix: THREE.Matrix4;
+  readonly rgb: readonly [number, number, number];
+}
+
+function addInstancedArchetype(options: {
+  readonly archetype: TreeArchetype;
+  readonly specs: readonly TreeInstanceSpec[];
+  readonly barkMat: THREE.Material;
+  readonly canopyMat: THREE.Material;
+  readonly depthMat: THREE.Material;
+  readonly group: THREE.Group;
+}): void {
+  if (options.specs.length === 0) {
+    return;
+  }
+
+  const trunks = new THREE.InstancedMesh(
+    options.archetype.woodGeo,
+    options.barkMat,
+    options.specs.length,
+  );
+  trunks.castShadow = true;
+  trunks.receiveShadow = true;
+
+  const canopies = new THREE.InstancedMesh(
+    options.archetype.foliageGeo,
+    options.canopyMat,
+    options.specs.length,
+  );
+  canopies.castShadow = true;
+  canopies.receiveShadow = true;
+  canopies.customDepthMaterial = options.depthMat;
+  canopies.frustumCulled = false;
+
+  const colors = new Float32Array(options.specs.length * 3);
+  for (let i = 0; i < options.specs.length; i++) {
+    const spec = options.specs[i];
+    if (!spec) {
+      continue;
+    }
+    trunks.setMatrixAt(i, spec.matrix);
+    canopies.setMatrixAt(i, spec.matrix);
+    colors[i * 3] = spec.rgb[0];
+    colors[i * 3 + 1] = spec.rgb[1];
+    colors[i * 3 + 2] = spec.rgb[2];
+  }
+
+  trunks.instanceMatrix.needsUpdate = true;
+  canopies.instanceMatrix.needsUpdate = true;
+  options.archetype.foliageGeo.setAttribute(
+    'aCanopyColor',
+    new THREE.InstancedBufferAttribute(colors, 3),
+  );
+  options.group.add(trunks);
+  options.group.add(canopies);
+}
 
 export function createForestVegetation(options: {
   readonly preset: WaterfallPresetConfig;
@@ -1174,25 +1462,33 @@ export function createForestVegetation(options: {
     normalMap: options.textures.forestBark.normalMap,
     normalScale: new THREE.Vector2(1.2, 1.2),
     roughnessMap: options.textures.forestBark.rmaMap,
-    color: new THREE.Color(0x524236),
+    color: new THREE.Color(0x46392e),
     roughness: 0.92,
     metalness: 0.02,
+    envMapIntensity: 0.55,
   });
   disposables.materials.push(barkMat);
 
-  const mapleTex = createAutumnLeafClusterTexture(options.anisotropy);
-  const coniferTex = createConiferBoughTexture(options.anisotropy);
+  const atlasSize = options.isSoftwareGpu ? 512 : 1024;
+  const mapleTex = createAutumnBoughAtlasTexture({
+    size: atlasSize,
+    anisotropy: options.anisotropy,
+  });
+  const coniferTex = createConiferSprigAtlasTexture({
+    size: atlasSize,
+    anisotropy: options.anisotropy,
+  });
   disposables.textures.push(mapleTex, coniferTex);
 
   const autumnCanopyUniforms = {
     uTime: { value: 0 },
-    uWindStrength: { value: 1.0 },
+    uWindStrength: { value: 0.85 },
     uLeafTex: { value: mapleTex },
     uSunDirection: { value: sunDir },
     uSunShadowMap: { value: options.fallbackShadowTexture },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uShadowMapSize: { value: 1024 },
-    uSubsurfaceStrength: { value: 1.15 },
+    uSubsurfaceStrength: { value: 1.25 },
     uFogCool: { value: fogCool },
     uFogWarm: { value: fogWarm },
   };
@@ -1205,13 +1501,13 @@ export function createForestVegetation(options: {
 
   const coniferCanopyUniforms = {
     uTime: { value: 0 },
-    uWindStrength: { value: 0.45 },
+    uWindStrength: { value: 0.38 },
     uLeafTex: { value: coniferTex },
     uSunDirection: { value: sunDir },
     uSunShadowMap: { value: options.fallbackShadowTexture },
     uSunShadowMatrix: { value: new THREE.Matrix4() },
     uShadowMapSize: { value: 1024 },
-    uSubsurfaceStrength: { value: 0.42 },
+    uSubsurfaceStrength: { value: 0.35 },
     uFogCool: { value: fogCool },
     uFogWarm: { value: fogWarm },
   };
@@ -1224,67 +1520,109 @@ export function createForestVegetation(options: {
   const autumnDepthMat = new THREE.MeshDepthMaterial({
     depthPacking: THREE.RGBADepthPacking,
     map: mapleTex,
-    alphaTest: 0.42,
+    alphaTest: 0.32,
     side: THREE.DoubleSide,
   });
   const coniferDepthMat = new THREE.MeshDepthMaterial({
     depthPacking: THREE.RGBADepthPacking,
     map: coniferTex,
-    alphaTest: 0.42,
+    alphaTest: 0.32,
     side: THREE.DoubleSide,
   });
   disposables.materials.push(autumnCanopyMat, coniferCanopyMat, autumnDepthMat, coniferDepthMat);
 
-  const deciduousArchetype = createDeciduousTreeArchetype(91237);
-  const coniferArchetype = createConiferArchetype(44209);
+  const heroMapleArchetype = createDeciduousArchetype({
+    seed: 91237,
+    leanX: 0.08,
+    crownSpread: 0.36,
+    lobeCount: 7,
+    trunkRadius: 0.028,
+  });
+  const leaningVineArchetype = createDeciduousArchetype({
+    seed: 51823,
+    leanX: 0.28,
+    crownSpread: 0.34,
+    lobeCount: 6,
+    trunkRadius: 0.022,
+  });
+  const midAlderArchetype = createDeciduousArchetype({
+    seed: 73911,
+    leanX: -0.1,
+    crownSpread: 0.31,
+    lobeCount: 6,
+    trunkRadius: 0.025,
+  });
+  const douglasFirArchetype = createDouglasFirArchetype(44209);
+
   disposables.geometries.push(
-    deciduousArchetype.woodGeo,
-    deciduousArchetype.foliageGeo,
-    coniferArchetype.trunkGeo,
-    coniferArchetype.boughGeo,
+    heroMapleArchetype.woodGeo,
+    heroMapleArchetype.foliageGeo,
+    leaningVineArchetype.woodGeo,
+    leaningVineArchetype.foliageGeo,
+    midAlderArchetype.woodGeo,
+    midAlderArchetype.foliageGeo,
+    douglasFirArchetype.woodGeo,
+    douglasFirArchetype.foliageGeo,
   );
 
   const dummy = new THREE.Object3D();
-  const deciduousMatrices: THREE.Matrix4[] = [];
-  const deciduousColors: number[] = [];
+  const heroMapleSpecs: TreeInstanceSpec[] = [];
+  const leaningVineSpecs: TreeInstanceSpec[] = [];
+  const midAlderSpecs: TreeInstanceSpec[] = [];
 
-  interface HeroAutumnSpec {
+  interface HeroPlacement {
     readonly x: number;
     readonly z: number;
-    readonly h: number;
-    readonly w: number;
+    readonly scale: number;
+    readonly yaw: number;
     readonly rgb: readonly [number, number, number];
   }
 
-  const heroAutumnSpecs: readonly HeroAutumnSpec[] = [
-    { x: -12.6, z: -13.2, h: 16.5, w: 12.2, rgb: [1.0, 0.84, 0.04] },
-    { x: -16.8, z: -15.4, h: 19.2, w: 13.8, rgb: [1.0, 0.58, 0.03] },
-    { x: -15.2, z: -6.8, h: 14.5, w: 11.4, rgb: [0.98, 0.72, 0.05] },
-    { x: 11.4, z: -13.4, h: 18.8, w: 13.4, rgb: [1.0, 0.76, 0.04] },
-    { x: 15.8, z: -15.2, h: 17.6, w: 12.6, rgb: [0.96, 0.44, 0.03] },
-    { x: 14.8, z: -5.8, h: 13.8, w: 10.6, rgb: [0.76, 0.82, 0.08] },
-    { x: -19.8, z: 3.4, h: 15.4, w: 11.8, rgb: [0.98, 0.46, 0.04] },
-    { x: 18.6, z: 4.8, h: 14.6, w: 11.5, rgb: [1.0, 0.8, 0.05] },
+  const iconicHeroMaples: readonly HeroPlacement[] = [
+    { x: -13.2, z: -13.6, scale: 16.5, yaw: 0.5, rgb: [1.0, 0.78, 0.04] },
+    { x: -17.4, z: -15.2, scale: 19.2, yaw: 2.1, rgb: [1.0, 0.54, 0.03] },
+    { x: 11.2, z: -13.4, scale: 19.6, yaw: 3.4, rgb: [1.0, 0.72, 0.04] },
+    { x: 16.0, z: -15.6, scale: 18.2, yaw: 1.2, rgb: [0.96, 0.42, 0.03] },
+    { x: -19.2, z: -4.8, scale: 15.6, yaw: 4.5, rgb: [0.98, 0.46, 0.04] },
+    { x: 18.4, z: -3.2, scale: 16.2, yaw: 5.1, rgb: [0.96, 0.76, 0.05] },
   ];
 
-  for (const spec of heroAutumnSpecs) {
+  for (const spec of iconicHeroMaples) {
     const gy = computeForestCanyonTerrainHeight({ x: spec.x, z: spec.z });
-    dummy.position.set(spec.x, gy - 0.85, spec.z);
-    dummy.rotation.set((rand() - 0.5) * 0.08, rand() * Math.PI * 2, (rand() - 0.5) * 0.08);
-    dummy.scale.set(spec.w, spec.h, spec.w);
+    dummy.position.set(spec.x, gy - 0.9, spec.z);
+    dummy.rotation.set((rand() - 0.5) * 0.06, spec.yaw, (rand() - 0.5) * 0.06);
+    dummy.scale.set(spec.scale, spec.scale, spec.scale);
     dummy.updateMatrix();
-    deciduousMatrices.push(dummy.matrix.clone());
-    deciduousColors.push(spec.rgb[0], spec.rgb[1], spec.rgb[2]);
+    heroMapleSpecs.push({ matrix: dummy.matrix.clone(), rgb: spec.rgb });
   }
 
-  const deciduousTarget = options.isSoftwareGpu ? 52 : 96;
+  const leaningGorgeMaples: readonly HeroPlacement[] = [
+    { x: -10.8, z: -8.6, scale: 10.8, yaw: 0.15, rgb: [1.0, 0.72, 0.04] },
+    { x: 10.6, z: -8.8, scale: 11.2, yaw: Math.PI - 0.2, rgb: [0.98, 0.68, 0.04] },
+    { x: -12.6, z: -1.4, scale: 11.6, yaw: 0.35, rgb: [0.96, 0.48, 0.04] },
+    { x: 12.2, z: 0.8, scale: 10.8, yaw: Math.PI + 0.25, rgb: [0.84, 0.78, 0.08] },
+    { x: -14.2, z: 7.4, scale: 11.8, yaw: 0.25, rgb: [0.98, 0.58, 0.04] },
+    { x: 13.8, z: 8.6, scale: 11.4, yaw: Math.PI - 0.3, rgb: [0.94, 0.72, 0.06] },
+  ];
+
+  for (const spec of leaningGorgeMaples) {
+    const gy = computeForestCanyonTerrainHeight({ x: spec.x, z: spec.z });
+    dummy.position.set(spec.x, gy - 0.8, spec.z);
+    dummy.rotation.set((rand() - 0.5) * 0.1, spec.yaw, (rand() - 0.5) * 0.1);
+    dummy.scale.set(spec.scale, spec.scale, spec.scale);
+    dummy.updateMatrix();
+    leaningVineSpecs.push({ matrix: dummy.matrix.clone(), rgb: spec.rgb });
+  }
+
+  const deciduousTotal = options.isSoftwareGpu ? 46 : 86;
   for (
     let attempt = 0;
-    attempt < deciduousTarget * 8 && deciduousMatrices.length < deciduousTarget;
+    attempt < deciduousTotal * 8 &&
+    heroMapleSpecs.length + leaningVineSpecs.length + midAlderSpecs.length < deciduousTotal;
     attempt++
   ) {
     const side = attempt % 2 === 0 ? -1 : 1;
-    const x = side * (11.5 + rand() * 38.0);
+    const x = side * (12.0 + rand() * 38.0);
     const z = -22 + rand() * 58.0;
 
     if (Math.hypot(x - 8.6, z - 46.8) < 16.5) {
@@ -1297,156 +1635,150 @@ export function createForestVegetation(options: {
     }
 
     const y = computeForestCanyonTerrainHeight({ x, z });
-    if (y < 3.2 || y > 38) {
+    if (y < 3.5 || y > 38) {
       continue;
     }
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.05) {
+    if (slope > 1.15) {
       continue;
     }
 
-    const h = 10.2 + rand() * 9.8;
-    const w = h * (0.68 + rand() * 0.24);
-    dummy.position.set(x, y - 0.75, z);
-    dummy.rotation.set((rand() - 0.5) * 0.1, rand() * Math.PI * 2, (rand() - 0.5) * 0.1);
-    dummy.scale.set(w, h, w);
+    const scale = 11.0 + rand() * 8.5;
+    dummy.position.set(x, y - 0.85, z);
+    dummy.rotation.set((rand() - 0.5) * 0.08, rand() * Math.PI * 2, (rand() - 0.5) * 0.08);
+    dummy.scale.set(scale, scale, scale);
     dummy.updateMatrix();
-    deciduousMatrices.push(dummy.matrix.clone());
 
-    const paletteIdx = Math.floor(rand() * AUTUMN_CANOPY_PALETTE.length);
-    const swatch = AUTUMN_CANOPY_PALETTE[paletteIdx] ?? [0.98, 0.62, 0.08];
-    const jitter = 0.88 + rand() * 0.24;
-    deciduousColors.push(swatch[0] * jitter, swatch[1] * jitter, swatch[2] * jitter);
-  }
+    const swatch = AUTUMN_CANOPY_PALETTE[Math.floor(rand() * AUTUMN_CANOPY_PALETTE.length)] ?? [
+      0.98, 0.62, 0.04,
+    ];
+    const jitter = 0.88 + rand() * 0.22;
+    const rgb: readonly [number, number, number] = [
+      swatch[0] * jitter,
+      swatch[1] * jitter,
+      swatch[2] * jitter,
+    ];
 
-  const decTrunks = new THREE.InstancedMesh(
-    deciduousArchetype.woodGeo,
-    barkMat,
-    deciduousMatrices.length,
-  );
-  decTrunks.castShadow = true;
-  decTrunks.receiveShadow = true;
-
-  const decCanopies = new THREE.InstancedMesh(
-    deciduousArchetype.foliageGeo,
-    autumnCanopyMat,
-    deciduousMatrices.length,
-  );
-  decCanopies.castShadow = true;
-  decCanopies.receiveShadow = true;
-  decCanopies.customDepthMaterial = autumnDepthMat;
-  decCanopies.frustumCulled = false;
-
-  for (let i = 0; i < deciduousMatrices.length; i++) {
-    const m = deciduousMatrices[i];
-    if (!m) {
-      continue;
+    const bucketRoll = attempt % 3;
+    if (bucketRoll === 0) {
+      heroMapleSpecs.push({ matrix: dummy.matrix.clone(), rgb });
+    } else if (bucketRoll === 1) {
+      leaningVineSpecs.push({ matrix: dummy.matrix.clone(), rgb });
+    } else {
+      midAlderSpecs.push({ matrix: dummy.matrix.clone(), rgb });
     }
-    decTrunks.setMatrixAt(i, m);
-    decCanopies.setMatrixAt(i, m);
   }
-  decTrunks.instanceMatrix.needsUpdate = true;
-  decCanopies.instanceMatrix.needsUpdate = true;
-  deciduousArchetype.foliageGeo.setAttribute(
-    'aCanopyColor',
-    new THREE.InstancedBufferAttribute(new Float32Array(deciduousColors), 3),
-  );
-  group.add(decTrunks);
-  group.add(decCanopies);
 
-  const coniferTarget = options.isSoftwareGpu ? 58 : 112;
-  const coniferMatrices: THREE.Matrix4[] = [];
-  const coniferColors: number[] = [];
+  addInstancedArchetype({
+    archetype: heroMapleArchetype,
+    specs: heroMapleSpecs,
+    barkMat,
+    canopyMat: autumnCanopyMat,
+    depthMat: autumnDepthMat,
+    group,
+  });
+  addInstancedArchetype({
+    archetype: leaningVineArchetype,
+    specs: leaningVineSpecs,
+    barkMat,
+    canopyMat: autumnCanopyMat,
+    depthMat: autumnDepthMat,
+    group,
+  });
+  addInstancedArchetype({
+    archetype: midAlderArchetype,
+    specs: midAlderSpecs,
+    barkMat,
+    canopyMat: autumnCanopyMat,
+    depthMat: autumnDepthMat,
+    group,
+  });
+
+  const coniferTarget = options.isSoftwareGpu ? 64 : 132;
+  const coniferSpecs: TreeInstanceSpec[] = [];
+
+  const skyNotchRimXs = [-14, -10.5, -7.2, -4.4, 3.8, 6.8, 10.2, 13.8, -18, 18];
+  for (const rx of skyNotchRimXs) {
+    const rz = -21.5 - rand() * 14.0;
+    const ry = computeForestCanyonTerrainHeight({ x: rx, z: rz });
+    const h = 22.0 + rand() * 11.0;
+    dummy.position.set(rx, ry - 1.2, rz);
+    dummy.rotation.set((rand() - 0.5) * 0.04, rand() * Math.PI * 2, (rand() - 0.5) * 0.04);
+    dummy.scale.set(h, h, h);
+    dummy.updateMatrix();
+    const shade = 0.55 + rand() * 0.35;
+    coniferSpecs.push({
+      matrix: dummy.matrix.clone(),
+      rgb: [0.36 * shade, 0.58 * shade, 0.38 * shade],
+    });
+  }
 
   for (
     let attempt = 0;
-    attempt < coniferTarget * 7 && coniferMatrices.length < coniferTarget;
+    attempt < coniferTarget * 7 && coniferSpecs.length < coniferTarget;
     attempt++
   ) {
-    const isCrestRim = attempt % 3 !== 0;
-    const x = isCrestRim ? (rand() - 0.5) * 96.0 : (rand() > 0.5 ? 1 : -1) * (18.5 + rand() * 44.0);
-    const z = isCrestRim ? -22.5 - rand() * 38.0 : -18.0 + rand() * 52.0;
+    const isCrestRim = attempt % 4 !== 0;
+    const x = isCrestRim ? (rand() - 0.5) * 96.0 : (rand() > 0.5 ? 1 : -1) * (20.0 + rand() * 44.0);
+    const z = isCrestRim ? -21.5 - rand() * 48.0 : -18.0 + rand() * 48.0;
 
-    if (Math.abs(x) < 4.2 && z > -25.0) {
+    if (Math.abs(x) < 2.6 && z > -26.0) {
       continue;
     }
-    if (Math.hypot(x - 8.6, z - 46.8) < 18.0) {
+    if (Math.hypot(x - 8.6, z - 46.8) < 19.0) {
       continue;
     }
 
     const y = computeForestCanyonTerrainHeight({ x, z });
-    if (y < 14.0 || y > 54.0) {
+    if (y < 18.0 || y > 62.0) {
       continue;
     }
 
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.0) {
+    if (slope > 1.15) {
       continue;
     }
 
-    const h = 14.0 + rand() * 14.5;
-    const w = h * (0.48 + rand() * 0.2);
-    dummy.position.set(x, y - 0.8, z);
-    dummy.rotation.set((rand() - 0.5) * 0.06, rand() * Math.PI * 2, (rand() - 0.5) * 0.06);
-    dummy.scale.set(w, h, w);
+    const h = 20.0 + rand() * 16.0;
+    dummy.position.set(x, y - 1.2, z);
+    dummy.rotation.set((rand() - 0.5) * 0.05, rand() * Math.PI * 2, (rand() - 0.5) * 0.05);
+    dummy.scale.set(h, h, h);
     dummy.updateMatrix();
-    coniferMatrices.push(dummy.matrix.clone());
 
-    const shade = 0.62 + rand() * 0.42;
-    coniferColors.push(0.45 * shade, 0.72 * shade, 0.44 * shade);
+    const shade = 0.48 + rand() * 0.42;
+    coniferSpecs.push({
+      matrix: dummy.matrix.clone(),
+      rgb: [0.34 * shade, 0.56 * shade, 0.36 * shade],
+    });
   }
 
-  const conTrunks = new THREE.InstancedMesh(
-    coniferArchetype.trunkGeo,
+  addInstancedArchetype({
+    archetype: douglasFirArchetype,
+    specs: coniferSpecs,
     barkMat,
-    coniferMatrices.length,
-  );
-  conTrunks.castShadow = true;
-  conTrunks.receiveShadow = true;
-
-  const conBoughs = new THREE.InstancedMesh(
-    coniferArchetype.boughGeo,
-    coniferCanopyMat,
-    coniferMatrices.length,
-  );
-  conBoughs.castShadow = true;
-  conBoughs.receiveShadow = true;
-  conBoughs.customDepthMaterial = coniferDepthMat;
-  conBoughs.frustumCulled = false;
-
-  for (let i = 0; i < coniferMatrices.length; i++) {
-    const m = coniferMatrices[i];
-    if (!m) {
-      continue;
-    }
-    conTrunks.setMatrixAt(i, m);
-    conBoughs.setMatrixAt(i, m);
-  }
-  conTrunks.instanceMatrix.needsUpdate = true;
-  conBoughs.instanceMatrix.needsUpdate = true;
-  coniferArchetype.boughGeo.setAttribute(
-    'aCanopyColor',
-    new THREE.InstancedBufferAttribute(new Float32Array(coniferColors), 3),
-  );
-  group.add(conTrunks);
-  group.add(conBoughs);
+    canopyMat: coniferCanopyMat,
+    depthMat: coniferDepthMat,
+    group,
+  });
 
   const shrubPlacements: PlantPlacement[] = [];
-
   const foregroundShrubClusters = [
-    { x: -11.4, z: 24.5, s: 3.1, hex: 0xf4a825 },
-    { x: -9.8, z: 28.4, s: 3.0, hex: 0xffc838 },
-    { x: 13.8, z: 25.4, s: 3.2, hex: 0x9ec42a },
-    { x: 12.2, z: 21.8, s: 3.3, hex: 0xf08c20 },
-    { x: 11.4, z: 16.4, s: 3.0, hex: 0x528829 },
-    { x: -10.6, z: 18.6, s: 3.1, hex: 0xd9661e },
-    { x: -10.4, z: 12.2, s: 3.2, hex: 0x4b7d26 },
-    { x: -8.8, z: 4.5, s: 2.8, hex: 0xf0b228 },
-    { x: 8.8, z: 3.8, s: 2.9, hex: 0x6ea02b },
-    { x: -7.8, z: -7.5, s: 2.7, hex: 0xe69820 },
-    { x: 7.4, z: -7.2, s: 2.8, hex: 0x82ab2b },
-    { x: -9.8, z: -11.4, s: 3.1, hex: 0xffbc2c },
-    { x: 9.6, z: -11.2, s: 3.2, hex: 0x5d9029 },
+    { x: -11.4, z: 24.5, s: 2.9, hex: 0xffbe24 },
+    { x: -9.8, z: 28.4, s: 2.8, hex: 0xf27d18 },
+    { x: 13.6, z: 25.4, s: 3.1, hex: 0x9ab822 },
+    { x: 12.0, z: 21.8, s: 3.2, hex: 0xffbe24 },
+    { x: 11.2, z: 16.4, s: 2.8, hex: 0x3b7622 },
+    { x: -10.6, z: 18.6, s: 2.9, hex: 0xd84814 },
+    { x: -10.2, z: 12.2, s: 3.0, hex: 0x265418 },
+    { x: -8.8, z: 4.5, s: 2.6, hex: 0xe89e1c },
+    { x: 8.8, z: 3.8, s: 2.7, hex: 0x3b7622 },
+    { x: -8.6, z: -7.5, s: 2.5, hex: 0xf27d18 },
+    { x: 8.4, z: -7.2, s: 2.6, hex: 0x9ab822 },
+    { x: -10.2, z: -11.4, s: 2.8, hex: 0xffbe24 },
+    { x: 10.0, z: -11.2, s: 2.9, hex: 0x3b7622 },
+    { x: 14.5, z: 31.5, s: 3.2, hex: 0xffbe24 },
+    { x: 11.5, z: 33.0, s: 2.9, hex: 0x9ab822 },
+    { x: -8.5, z: 32.5, s: 3.0, hex: 0xf27d18 },
   ];
 
   for (const cluster of foregroundShrubClusters) {
@@ -1464,7 +1796,7 @@ export function createForestVegetation(options: {
     });
   }
 
-  const shrubTarget = options.isSoftwareGpu ? 115 : 245;
+  const shrubTarget = options.isSoftwareGpu ? 105 : 220;
   for (
     let attempt = 0;
     attempt < shrubTarget * 7 && shrubPlacements.length < shrubTarget;
@@ -1473,7 +1805,7 @@ export function createForestVegetation(options: {
     const x = (rand() - 0.5) * 60.0;
     const z = -18.0 + rand() * 58.0;
 
-    if (Math.hypot(x, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 5.4) {
+    if (Math.hypot(x, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 5.6) {
       continue;
     }
     const riverCenter = computeForestRiverCenterX(z);
@@ -1490,17 +1822,17 @@ export function createForestVegetation(options: {
       continue;
     }
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.85) {
+    if (slope > 1.75) {
       continue;
     }
 
-    const s = 1.35 + rand() * 2.15;
+    const s = 1.25 + rand() * 1.95;
     dummy.position.set(x, y - 0.18, z);
     dummy.rotation.set((rand() - 0.5) * 0.34, rand() * Math.PI * 2, (rand() - 0.5) * 0.34);
-    dummy.scale.set(s, s * (0.8 + rand() * 0.42), s);
+    dummy.scale.set(s, s * (0.8 + rand() * 0.4), s);
     dummy.updateMatrix();
 
-    const hex = SHRUB_AUTUMN_PALETTE[Math.floor(rand() * SHRUB_AUTUMN_PALETTE.length)] ?? 0x6ea02b;
+    const hex = SHRUB_AUTUMN_PALETTE[Math.floor(rand() * SHRUB_AUTUMN_PALETTE.length)] ?? 0x3b7622;
     shrubPlacements.push({
       matrix: dummy.matrix.clone(),
       color: new THREE.Color(hex),
@@ -1508,12 +1840,12 @@ export function createForestVegetation(options: {
   }
 
   const fernPlacements: PlantPlacement[] = [];
-  const fernTarget = options.isSoftwareGpu ? 160 : 420;
+  const fernTarget = options.isSoftwareGpu ? 180 : 480;
   for (let attempt = 0; attempt < fernTarget * 7 && fernPlacements.length < fernTarget; attempt++) {
     const x = (rand() - 0.5) * 62.0;
     const z = -18.0 + rand() * 62.0;
 
-    if (Math.hypot(x * 0.8, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 4.9) {
+    if (Math.hypot(x * 0.8, z - FOREST_WATERFALL_CONFIG.plungeCenterZ) < 4.8) {
       continue;
     }
     const riverCenter = computeForestRiverCenterX(z);
@@ -1526,17 +1858,22 @@ export function createForestVegetation(options: {
     }
 
     const y = computeForestCanyonTerrainHeight({ x, z });
-    if (y < 0.25 || y > 26.0) {
+    if (y < 0.25 || y > 25.0) {
       continue;
     }
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.8) {
+    if (slope > 2.35) {
       continue;
     }
 
-    const s = 0.95 + rand() * 1.55;
-    dummy.position.set(x, y - 0.08, z);
-    dummy.rotation.set((rand() - 0.5) * 0.36, rand() * Math.PI * 2, (rand() - 0.5) * 0.36);
+    const wallOutTilt = slope > 0.75 ? Math.sign(-x) * Math.min(0.62, slope * 0.28) : 0;
+    const s = 0.9 + rand() * 1.5;
+    dummy.position.set(x, y - 0.1, z);
+    dummy.rotation.set(
+      (rand() - 0.5) * 0.32,
+      rand() * Math.PI * 2,
+      wallOutTilt + (rand() - 0.5) * 0.24,
+    );
     dummy.scale.set(s, s * (0.85 + rand() * 0.38), s);
     dummy.updateMatrix();
 
@@ -1546,80 +1883,6 @@ export function createForestVegetation(options: {
       color: new THREE.Color(hex),
     });
   }
-
-  const wallCushionGeo = createWallFoliageCushionGeometry(55109);
-  disposables.geometries.push(wallCushionGeo);
-  const wallCushionMatrices: THREE.Matrix4[] = [];
-  const wallCushionColors: number[] = [];
-  const wallCushionPalette: readonly (readonly [number, number, number])[] = [
-    [0.24, 0.58, 0.14],
-    [0.36, 0.7, 0.16],
-    [0.56, 0.78, 0.16],
-    [0.18, 0.46, 0.12],
-    [0.92, 0.74, 0.1],
-    [0.96, 0.5, 0.06],
-    [0.72, 0.76, 0.14],
-  ];
-
-  const wallCushionTarget = options.isSoftwareGpu ? 110 : 260;
-  for (
-    let attempt = 0;
-    attempt < wallCushionTarget * 8 && wallCushionMatrices.length < wallCushionTarget;
-    attempt++
-  ) {
-    const side = attempt % 2 === 0 ? -1 : 1;
-    const x = side * (5.2 + rand() * 24.0);
-    const z = -17.5 + rand() * 44.0;
-
-    if (Math.abs(x) < 4.8 && z < -6.0) {
-      continue;
-    }
-    const y = computeForestCanyonTerrainHeight({ x, z });
-    if (y < 1.2 || y > 25.0) {
-      continue;
-    }
-    const slope = computeForestSlope({ x, z });
-    if (slope < 0.32 || slope > 3.0) {
-      continue;
-    }
-
-    const sx = 1.35 + rand() * 2.15;
-    const sy = 1.1 + rand() * 1.75;
-    dummy.position.set(x, y - 0.15, z);
-    dummy.rotation.set((rand() - 0.5) * 0.4, rand() * Math.PI * 2, (rand() - 0.5) * 0.4);
-    dummy.scale.set(sx, sy, sx);
-    dummy.updateMatrix();
-    wallCushionMatrices.push(dummy.matrix.clone());
-
-    const swatch = wallCushionPalette[Math.floor(rand() * wallCushionPalette.length)] ?? [
-      0.36, 0.66, 0.16,
-    ];
-    const jitter = 0.85 + rand() * 0.3;
-    wallCushionColors.push(swatch[0] * jitter, swatch[1] * jitter, swatch[2] * jitter);
-  }
-
-  const wallCushions = new THREE.InstancedMesh(
-    wallCushionGeo,
-    autumnCanopyMat,
-    wallCushionMatrices.length,
-  );
-  wallCushions.castShadow = true;
-  wallCushions.receiveShadow = true;
-  wallCushions.customDepthMaterial = autumnDepthMat;
-  wallCushions.frustumCulled = false;
-
-  for (let i = 0; i < wallCushionMatrices.length; i++) {
-    const m = wallCushionMatrices[i];
-    if (m) {
-      wallCushions.setMatrixAt(i, m);
-    }
-  }
-  wallCushions.instanceMatrix.needsUpdate = true;
-  wallCushionGeo.setAttribute(
-    'aCanopyColor',
-    new THREE.InstancedBufferAttribute(new Float32Array(wallCushionColors), 3),
-  );
-  group.add(wallCushions);
 
   const grassTuftGeo = createForestGrassTuftGeometry();
   disposables.geometries.push(grassTuftGeo);
@@ -1641,7 +1904,7 @@ export function createForestVegetation(options: {
   });
   disposables.materials.push(forestGrassMat);
 
-  const grassTarget = options.isSoftwareGpu ? 2200 : 6500;
+  const grassTarget = options.isSoftwareGpu ? 2000 : 5800;
   const grassMatrices: THREE.Matrix4[] = [];
   const grassTints: number[] = [];
 
@@ -1670,24 +1933,24 @@ export function createForestVegetation(options: {
       continue;
     }
     const slope = computeForestSlope({ x, z });
-    if (slope > 1.55) {
+    if (slope > 1.45) {
       continue;
     }
 
-    const scale = 0.65 + rand() * 1.15;
+    const scale = 0.6 + rand() * 1.05;
     dummy.position.set(x, y - 0.06, z);
-    dummy.rotation.set((rand() - 0.5) * 0.35, rand() * Math.PI * 2, (rand() - 0.5) * 0.35);
-    dummy.scale.set(scale, scale * (0.8 + rand() * 0.45), scale);
+    dummy.rotation.set((rand() - 0.5) * 0.32, rand() * Math.PI * 2, (rand() - 0.5) * 0.32);
+    dummy.scale.set(scale, scale * (0.78 + rand() * 0.42), scale);
     dummy.updateMatrix();
     grassMatrices.push(dummy.matrix.clone());
 
     const warmth = rand();
-    if (warmth > 0.82) {
-      grassTints.push(1.45 + rand() * 0.35, 1.05 + rand() * 0.25, 0.42 + rand() * 0.18);
+    if (warmth > 0.85) {
+      grassTints.push(1.32 + rand() * 0.28, 0.96 + rand() * 0.22, 0.36 + rand() * 0.14);
     } else if (warmth > 0.45) {
-      grassTints.push(0.88 + rand() * 0.32, 1.12 + rand() * 0.28, 0.58 + rand() * 0.2);
+      grassTints.push(0.74 + rand() * 0.26, 1.02 + rand() * 0.24, 0.46 + rand() * 0.16);
     } else {
-      grassTints.push(0.58 + rand() * 0.24, 0.95 + rand() * 0.26, 0.52 + rand() * 0.18);
+      grassTints.push(0.46 + rand() * 0.2, 0.86 + rand() * 0.22, 0.42 + rand() * 0.14);
     }
   }
 
@@ -1717,6 +1980,8 @@ export function createForestVegetation(options: {
     placements: shrubPlacements,
     group,
     anisotropy: options.anisotropy,
+    sunDir,
+    isAutumnHueRemap: true,
     isDisposed,
     disposables,
     onLoaded: options.onStaticGeometryChanged,
@@ -1727,6 +1992,8 @@ export function createForestVegetation(options: {
     placements: fernPlacements,
     group,
     anisotropy: options.anisotropy,
+    sunDir,
+    isAutumnHueRemap: false,
     isDisposed,
     disposables,
     onLoaded: options.onStaticGeometryChanged,

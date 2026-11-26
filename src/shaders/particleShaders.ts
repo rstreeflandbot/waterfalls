@@ -59,6 +59,9 @@ uniform float uCameraFar;
 uniform sampler2D uSunShadowMap;
 uniform mat4 uSunShadowMatrix;
 uniform float uShadowMapSize;
+uniform float uForestMode;
+uniform vec3 uFogCool;
+uniform vec3 uFogWarm;
 
 varying vec2 vUv;
 varying float vAge;
@@ -116,13 +119,23 @@ void main() {
   float mie = (1.0 - g * g) / (4.0 * 3.14159 * pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5));
   float forwardScatter = clamp(mie * 0.72, 0.0, 2.2) * sunShadow;
 
-  vec3 shadowVapor = vec3(0.11, 0.145, 0.19);
-  vec3 sunlitVapor = vec3(0.55, 0.42, 0.29);
-  vec3 goldenMie = vec3(1.15, 0.66, 0.32);
+  vec3 shadowVapor = mix(vec3(0.11, 0.145, 0.19), vec3(0.72, 0.78, 0.84), uForestMode);
+  vec3 sunlitVapor = mix(vec3(0.55, 0.42, 0.29), vec3(1.18, 1.12, 0.98), uForestMode);
+  vec3 goldenMie = mix(vec3(1.15, 0.66, 0.32), vec3(1.42, 1.18, 0.84), uForestMode);
 
   vec3 color = mix(shadowVapor, sunlitVapor, sunShadow * 0.78);
   color += goldenMie * forwardScatter * 0.42 * (1.0 - softCircle * 0.35);
-  color = applyLinearHeightFog(color, vWorldPos, cameraPosition, sunDir);
+  if (uForestMode > 0.5) {
+    vec3 toFrag = vWorldPos - cameraPosition;
+    float dist = length(toFrag);
+    vec3 rayDir = toFrag / max(dist, 0.0001);
+    float fogFactor = clamp(1.0 - exp(-pow(dist * 0.0022, 1.35)), 0.0, 0.48);
+    float sunAlign = max(dot(rayDir, sunDir), 0.0);
+    vec3 fFog = mix(uFogCool, uFogWarm, pow(sunAlign, 2.4) * 0.52);
+    color = mix(color, fFog, fogFactor);
+  } else {
+    color = applyLinearHeightFog(color, vWorldPos, cameraPosition, sunDir);
+  }
 
   gl_FragColor = vec4(color, alpha);
 }
@@ -190,6 +203,9 @@ uniform vec2 uResolution;
 uniform sampler2D uSunShadowMap;
 uniform mat4 uSunShadowMatrix;
 uniform float uShadowMapSize;
+uniform float uForestMode;
+uniform vec3 uFogCool;
+uniform vec3 uFogWarm;
 
 varying vec2 vUv;
 varying float vAlpha;
