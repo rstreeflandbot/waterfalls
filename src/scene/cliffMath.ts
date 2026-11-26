@@ -15,13 +15,13 @@ export interface WaterfallConfig {
 }
 
 export const SCENE_CONFIG: WaterfallConfig = {
-  crestHeight: 18.6,
-  crestZ: -2.4,
-  crestWidth: 7.4,
-  plungeCenterZ: 0.75,
-  plungeWidth: 9.2,
+  crestHeight: 23.5,
+  crestZ: -14.2,
+  crestWidth: 10.4,
+  plungeCenterZ: -10.4,
+  plungeWidth: 12.6,
   poolSurfaceY: 0.0,
-  sunDirection: normalizeVec3({ x: -0.66, y: 0.23, z: -0.71 }),
+  sunDirection: normalizeVec3({ x: -0.72, y: 0.21, z: -0.66 }),
 };
 
 export interface ParabolicPointInput {
@@ -44,6 +44,11 @@ export interface WetnessInput {
   readonly z: number;
 }
 
+export interface TerrainHeightInput {
+  readonly x: number;
+  readonly z: number;
+}
+
 export interface BasaltColumnPlacement {
   readonly x: number;
   readonly y: number;
@@ -58,9 +63,8 @@ export interface BasaltColumnPlacement {
 
 export interface ColumnLayoutOptions {
   readonly seed: number;
-  readonly ringColumnCount: number;
-  readonly hangingColumnCount: number;
-  readonly outerWallCount: number;
+  readonly cliffClusterCount: number;
+  readonly ledgeOutcropCount: number;
 }
 
 export function clamp(input: {
@@ -114,7 +118,7 @@ export function computeParabolicFallPoint(input: ParabolicPointInput): Parabolic
   const dropDistance = input.startY - input.endY;
   const fallCurve = clampedProgress * clampedProgress;
   const y = input.startY - dropDistance * fallCurve;
-  const z = input.startZ + input.forwardReach * Math.pow(clampedProgress, 0.85);
+  const z = input.startZ + input.forwardReach * Math.pow(clampedProgress, 0.84);
   const speedFactor = 0.35 + clampedProgress * 1.45;
   return { y, z, speedFactor };
 }
@@ -123,147 +127,155 @@ export function computeRockWetness(input: WetnessInput): number {
   const poolProximity =
     1 -
     smoothstep({
-      edge0: 0.2,
-      edge1: 3.8,
+      edge0: 0.15,
+      edge1: 2.8,
       value: input.y - SCENE_CONFIG.poolSurfaceY,
     });
 
-  const horizontalDistToFall = Math.hypot(
-    input.x * 0.72,
-    input.z - SCENE_CONFIG.plungeCenterZ * 0.6,
-  );
+  const horizontalDistToFall = Math.hypot(input.x * 0.65, input.z - SCENE_CONFIG.plungeCenterZ);
   const sprayProximity =
     1 -
     smoothstep({
-      edge0: 3.5,
-      edge1: 12.5,
+      edge0: 4.5,
+      edge1: 16.5,
       value: horizontalDistToFall,
     });
 
   const heightMask =
     1 -
     smoothstep({
-      edge0: SCENE_CONFIG.crestHeight + 1.2,
-      edge1: SCENE_CONFIG.crestHeight + 4.5,
+      edge0: SCENE_CONFIG.crestHeight + 0.5,
+      edge1: SCENE_CONFIG.crestHeight + 3.5,
       value: input.y,
     });
 
-  const combinedSpray = sprayProximity * heightMask;
   return clamp({
-    value: Math.max(poolProximity, combinedSpray * 0.92),
+    value: Math.max(poolProximity, sprayProximity * heightMask * 0.92),
     min: 0,
     max: 1,
   });
 }
 
-export function computeAmphitheaterRadius(angleRadians: number): number {
-  const cosAngle = Math.cos(angleRadians);
-  const sinAngle = Math.sin(angleRadians);
-  const baseRadius = 11.4 + 4.8 * Math.pow(Math.abs(sinAngle), 1.35);
-  const grottoRecess = cosAngle > 0 ? -2.2 * Math.pow(cosAngle, 2.2) : 0;
-  return baseRadius + grottoRecess;
+export function computeRiverCenterX(z: number): number {
+  return Math.sin((z + 10) * 0.042) * 5.2 + Math.sin((z + 10) * 0.017) * 3.8;
+}
+
+export function computeEscarpmentLineZ(x: number): number {
+  const alcoveRecess = -3.4 * Math.exp(-Math.pow(x / 8.5, 2));
+  const sweepingCurve = -Math.pow(Math.abs(x) * 0.055, 1.45) * 3.2;
+  const rockyMeander = Math.sin(x * 0.085) * 2.4 + Math.cos(x * 0.19) * 1.1;
+  return SCENE_CONFIG.crestZ + alcoveRecess + sweepingCurve + rockyMeander;
+}
+
+export function computeOpenVolcanicTerrainHeight(input: TerrainHeightInput): number {
+  const { x, z } = input;
+  const cliffLineZ = computeEscarpmentLineZ(x);
+
+  const escarpmentTransition =
+    1 -
+    smoothstep({
+      edge0: cliffLineZ - 4.5,
+      edge1: cliffLineZ + 6.5,
+      value: z,
+    });
+
+  const riverNotchDist = Math.abs(x - Math.sin((z + 14) * 0.05) * 1.4);
+  const upperGorgeNotch =
+    (1 - smoothstep({ edge0: 4.4, edge1: 10.5, value: riverNotchDist })) *
+    (1 - smoothstep({ edge0: -38, edge1: -11, value: z }));
+
+  const lateralSlopeDown = 1 - smoothstep({ edge0: 36, edge1: 115, value: Math.abs(x) }) * 0.42;
+
+  const plateauBase =
+    (SCENE_CONFIG.crestHeight +
+      2.6 +
+      Math.sin(x * 0.055) * 3.4 +
+      Math.cos(z * 0.065 + x * 0.03) * 2.6) *
+      lateralSlopeDown -
+    upperGorgeNotch * 3.4;
+
+  const steppedTerrace =
+    Math.sin(x * 0.13 + z * 0.09) * 1.65 + Math.cos(x * 0.29 - z * 0.22) * 0.65;
+
+  const escarpmentHeight = escarpmentTransition * Math.max(0, plateauBase + steppedTerrace);
+
+  const distToPlunge = Math.hypot(x * 0.85, z - (SCENE_CONFIG.plungeCenterZ + 3.2));
+  const plungePoolDepth = -3.2 * (1 - smoothstep({ edge0: 5.5, edge1: 15.5, value: distToPlunge }));
+
+  const riverCenterX = computeRiverCenterX(z);
+  const riverHalfWidth =
+    7.2 +
+    Math.exp(-Math.pow((z - (SCENE_CONFIG.plungeCenterZ + 4)) / 10, 2)) * 5.2 +
+    smoothstep({ edge0: 14, edge1: 95, value: z }) * 8.5;
+  const distToRiver = Math.abs(x - riverCenterX);
+  const riverMask =
+    smoothstep({ edge0: cliffLineZ + 1.0, edge1: cliffLineZ + 8.0, value: z }) *
+    (1 -
+      smoothstep({
+        edge0: riverHalfWidth * 0.65,
+        edge1: riverHalfWidth + 6.5,
+        value: distToRiver,
+      }));
+  const riverBedDepth = -1.65 * riverMask;
+
+  const valleyOpenMask = smoothstep({
+    edge0: cliffLineZ + 2.0,
+    edge1: cliffLineZ + 14.0,
+    value: z,
+  });
+  const bankRise =
+    valleyOpenMask *
+    smoothstep({ edge0: riverHalfWidth - 0.5, edge1: riverHalfWidth + 28.0, value: distToRiver }) *
+    (4.6 + Math.sin(x * 0.06 + z * 0.04) * 2.2 + Math.cos(x * 0.14 - z * 0.11) * 0.9);
+
+  const farRollingHills =
+    valleyOpenMask *
+    smoothstep({ edge0: 42, edge1: 118, value: Math.abs(x) }) *
+    (11.0 + Math.abs(Math.sin(z * 0.045 + x * 0.03)) * 12.0);
+
+  const distantMountainMask = 1 - smoothstep({ edge0: -125, edge1: -36, value: z });
+  const distantMountains =
+    distantMountainMask *
+    (16.0 +
+      Math.pow(Math.abs(Math.sin(x * 0.036 + 0.55)), 1.3) * 34.0 +
+      Math.abs(Math.cos(x * 0.078 - z * 0.042)) * 14.0 +
+      Math.sin(x * 0.17 + z * 0.14) * 3.8);
+
+  const rockDetail =
+    Math.sin(x * 0.34 + z * 0.28) * 0.38 +
+    Math.cos(x * 0.78 - z * 0.66) * 0.18 +
+    Math.sin(x * 1.55 + z * 1.25) * 0.07;
+
+  const waterDepression = Math.min(plungePoolDepth, riverBedDepth);
+  const valleyElevation = waterDepression + bankRise + farRollingHills;
+
+  return Math.max(valleyElevation, escarpmentHeight) + distantMountains + rockDetail;
 }
 
 export function generateBasaltColumnLayout(options: ColumnLayoutOptions): BasaltColumnPlacement[] {
   const nextRand = createSeededRandom(options.seed);
   const columns: BasaltColumnPlacement[] = [];
 
-  for (let i = 0; i < options.ringColumnCount; i++) {
-    const t = i / Math.max(1, options.ringColumnCount - 1);
-    const angle = -Math.PI * 0.76 + t * Math.PI * 1.52;
-    const sinAngle = Math.sin(angle);
-    const cosAngle = Math.cos(angle);
-    const radialJitter = (nextRand() - 0.5) * 2.1;
-    const baseRadius = computeAmphitheaterRadius(angle) + radialJitter;
+  for (let i = 0; i < options.cliffClusterCount; i++) {
+    const t = i / Math.max(1, options.cliffClusterCount - 1);
+    const x = -34 + t * 68 + (nextRand() - 0.5) * 1.6;
 
-    const x = sinAngle * baseRadius;
-    const z = -cosAngle * baseRadius + 3.2;
-
-    const isWaterfallChannel = Math.abs(x) < 3.6 && z < -0.5;
-    const radius = 0.62 + nextRand() * 0.42;
-
-    let topY: number;
-    if (isWaterfallChannel) {
-      topY = SCENE_CONFIG.crestHeight - 0.45 - nextRand() * 0.65;
-    } else {
-      const sideLift = smoothstep({ edge0: 3.4, edge1: 9.5, value: Math.abs(x) }) * 5.2;
-      const canyonFade =
-        1 -
-        smoothstep({
-          edge0: 11.0,
-          edge1: 21.0,
-          value: z,
-        }) *
-          0.42;
-      topY = (SCENE_CONFIG.crestHeight + sideLift + (nextRand() - 0.35) * 4.4) * canyonFade;
-    }
-
-    const baseY = -3.0;
-    const height = Math.max(4.0, topY - baseY);
-    columns.push({
-      x,
-      y: baseY + height * 0.5,
-      z,
-      radius,
-      height,
-      rotationY: Math.floor(nextRand() * 6) * (Math.PI / 3) + (nextRand() - 0.5) * 0.14,
-      tiltX: (nextRand() - 0.5) * 0.04,
-      tiltZ: (nextRand() - 0.5) * 0.04,
-      isHanging: false,
-    });
-  }
-
-  for (let i = 0; i < options.hangingColumnCount; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    const sideProgress =
-      Math.floor(i / 2) / Math.max(1, Math.floor(options.hangingColumnCount / 2));
-    const angle = side * (0.26 + sideProgress * 0.92 + (nextRand() - 0.5) * 0.08);
-    const radiusDist = computeAmphitheaterRadius(angle) - 1.45 - nextRand() * 1.1;
-    const x = Math.sin(angle) * radiusDist;
-    const z = -Math.cos(angle) * radiusDist + 3.2;
-
-    if (Math.abs(x) < 3.55 && z < 0.2) {
+    if (Math.abs(x) < 4.9) {
       continue;
     }
 
-    const columnRadius = 0.44 + nextRand() * 0.26;
-    const topY = SCENE_CONFIG.crestHeight + 3.2 + nextRand() * 4.5;
-    const bottomY = 7.8 + nextRand() * 6.8;
-    const height = Math.max(4.2, topY - bottomY);
+    const cliffZ = computeEscarpmentLineZ(x);
+    const z = cliffZ - 0.8 + (nextRand() - 0.5) * 3.8;
 
-    columns.push({
-      x,
-      y: bottomY + height * 0.5,
-      z,
-      radius: columnRadius,
-      height,
-      rotationY: Math.floor(nextRand() * 6) * (Math.PI / 3),
-      tiltX: (nextRand() - 0.5) * 0.03,
-      tiltZ: (nextRand() - 0.5) * 0.03,
-      isHanging: true,
-    });
-  }
-
-  for (let i = 0; i < options.outerWallCount; i++) {
-    const t = i / Math.max(1, options.outerWallCount - 1);
-    const angle = -Math.PI * 0.85 + t * Math.PI * 1.7;
-    const tierOffset = 3.2 + nextRand() * 7.8;
-    const baseRadius = computeAmphitheaterRadius(angle) + tierOffset;
-    const x = Math.sin(angle) * baseRadius;
-    const z = -Math.cos(angle) * baseRadius + 3.0;
-
-    if (Math.abs(x) < 4.4 && z < -3.0 && z > -22.0) {
+    if (z > -8.5) {
       continue;
     }
 
-    const radius = 0.85 + nextRand() * 0.65;
-    const distanceFromCenter = Math.hypot(x, z);
-    const topY =
-      SCENE_CONFIG.crestHeight +
-      2.5 +
-      smoothstep({ edge0: 10, edge1: 24, value: distanceFromCenter }) * 8.5 +
-      (nextRand() - 0.4) * 5.2;
-    const baseY = -4.0;
+    const radius = 0.62 + nextRand() * 0.55;
+    const distanceFromFalls = Math.abs(x);
+    const heightScale = 1 - smoothstep({ edge0: 14, edge1: 35, value: distanceFromFalls }) * 0.42;
+    const topY = (SCENE_CONFIG.crestHeight + 1.8 + (nextRand() - 0.42) * 7.5) * heightScale;
+    const baseY = -2.5;
     const height = Math.max(6.0, topY - baseY);
 
     columns.push({
@@ -272,10 +284,42 @@ export function generateBasaltColumnLayout(options: ColumnLayoutOptions): Basalt
       z,
       radius,
       height,
-      rotationY: Math.floor(nextRand() * 6) * (Math.PI / 3) + (nextRand() - 0.5) * 0.12,
+      rotationY: Math.floor(nextRand() * 6) * (Math.PI / 3) + (nextRand() - 0.5) * 0.14,
       tiltX: (nextRand() - 0.5) * 0.05,
       tiltZ: (nextRand() - 0.5) * 0.05,
       isHanging: false,
+    });
+  }
+
+  for (let i = 0; i < options.ledgeOutcropCount; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const rank = Math.floor(i / 2) / Math.max(1, Math.floor(options.ledgeOutcropCount / 2));
+    const x = side * (5.2 + rank * 19.0 + (nextRand() - 0.5) * 1.4);
+    const cliffZ = computeEscarpmentLineZ(x);
+    const z = cliffZ + 0.6 + nextRand() * 2.6;
+
+    if (z > -7.5) {
+      continue;
+    }
+
+    const radius = 0.46 + nextRand() * 0.36;
+    const isSteppedShelf = nextRand() > 0.42;
+    const bottomY = isSteppedShelf ? -2.0 : 8.5 + nextRand() * 7.0;
+    const topY = isSteppedShelf
+      ? 4.0 + nextRand() * 11.5
+      : SCENE_CONFIG.crestHeight + 1.2 + nextRand() * 4.0;
+    const height = Math.max(3.5, topY - bottomY);
+
+    columns.push({
+      x,
+      y: bottomY + height * 0.5,
+      z,
+      radius,
+      height,
+      rotationY: Math.floor(nextRand() * 6) * (Math.PI / 3),
+      tiltX: (nextRand() - 0.5) * 0.04,
+      tiltZ: (nextRand() - 0.5) * 0.04,
+      isHanging: !isSteppedShelf,
     });
   }
 

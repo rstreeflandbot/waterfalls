@@ -12,8 +12,8 @@ export interface CameraController {
   readonly dispose: () => void;
 }
 
-const HERO_CAMERA_POSITION = new THREE.Vector3(5.6, 4.7, 21.8);
-const HERO_CAMERA_TARGET = new THREE.Vector3(-0.35, 7.6, -1.2);
+const HERO_CAMERA_POSITION = new THREE.Vector3(14.5, 6.2, 22.5);
+const HERO_CAMERA_TARGET = new THREE.Vector3(0.0, 9.8, -11.5);
 
 export function createCameraController(options: {
   readonly camera: THREE.PerspectiveCamera;
@@ -26,14 +26,14 @@ export function createCameraController(options: {
   controls.enableDamping = true;
   controls.dampingFactor = 0.045;
   controls.enablePan = false;
-  controls.rotateSpeed = 0.55;
-  controls.zoomSpeed = 0.72;
-  controls.minDistance = 10.5;
-  controls.maxDistance = 33.0;
-  controls.minPolarAngle = Math.PI * 0.24;
-  controls.maxPolarAngle = Math.PI * 0.53;
-  controls.minAzimuthAngle = -Math.PI * 0.44;
-  controls.maxAzimuthAngle = Math.PI * 0.44;
+  controls.rotateSpeed = 0.58;
+  controls.zoomSpeed = 0.78;
+  controls.minDistance = 14.0;
+  controls.maxDistance = 64.0;
+  controls.minPolarAngle = Math.PI * 0.14;
+  controls.maxPolarAngle = Math.PI * 0.49;
+  controls.minAzimuthAngle = -Math.PI * 0.78;
+  controls.maxAzimuthAngle = Math.PI * 0.78;
   controls.update();
 
   let driftEnabled = true;
@@ -77,13 +77,13 @@ export function createCameraController(options: {
           offsetVec.copy(options.camera.position).sub(controls.target);
           sphericalOffset.setFromVector3(offsetVec);
 
-          const azimuthVelocity = Math.cos(elapsedSeconds * 0.14) * 0.032 * driftBlend;
-          const polarVelocity = Math.sin(elapsedSeconds * 0.19) * 0.009 * driftBlend;
+          const azimuthVelocity = Math.cos(elapsedSeconds * 0.11) * 0.028 * driftBlend;
+          const polarVelocity = Math.sin(elapsedSeconds * 0.16) * 0.007 * driftBlend;
 
           sphericalOffset.theta = THREE.MathUtils.clamp(
             sphericalOffset.theta + azimuthVelocity * clampedDelta,
-            controls.minAzimuthAngle + 0.06,
-            controls.maxAzimuthAngle - 0.06,
+            controls.minAzimuthAngle + 0.08,
+            controls.maxAzimuthAngle - 0.08,
           );
           sphericalOffset.phi = THREE.MathUtils.clamp(
             sphericalOffset.phi + polarVelocity * clampedDelta,
@@ -96,8 +96,8 @@ export function createCameraController(options: {
         }
       }
 
-      if (options.camera.position.y < 1.6) {
-        options.camera.position.y = 1.6;
+      if (options.camera.position.y < 2.1) {
+        options.camera.position.y = 2.1;
       }
 
       controls.update();

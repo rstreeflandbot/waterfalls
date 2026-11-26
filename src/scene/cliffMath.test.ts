@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   SCENE_CONFIG,
   clamp,
-  computeAmphitheaterRadius,
+  computeEscarpmentLineZ,
+  computeOpenVolcanicTerrainHeight,
   computeParabolicFallPoint,
+  computeRiverCenterX,
   computeRockWetness,
   createSeededRandom,
   generateBasaltColumnLayout,
@@ -43,73 +45,77 @@ describe('cliffMath', () => {
   it('computes parabolic free-fall trajectory with gravity acceleration', () => {
     const top = computeParabolicFallPoint({
       progress: 0,
-      startY: 18,
+      startY: 23.5,
       endY: 0,
-      startZ: -2,
-      forwardReach: 3,
+      startZ: -14.2,
+      forwardReach: 3.8,
     });
     const mid = computeParabolicFallPoint({
       progress: 0.5,
-      startY: 18,
+      startY: 23.5,
       endY: 0,
-      startZ: -2,
-      forwardReach: 3,
+      startZ: -14.2,
+      forwardReach: 3.8,
     });
     const bottom = computeParabolicFallPoint({
       progress: 1,
-      startY: 18,
+      startY: 23.5,
       endY: 0,
-      startZ: -2,
-      forwardReach: 3,
+      startZ: -14.2,
+      forwardReach: 3.8,
     });
 
-    expect(top.y).toBe(18);
-    expect(top.z).toBe(-2);
-    expect(mid.y).toBe(13.5);
+    expect(top.y).toBe(23.5);
+    expect(top.z).toBe(-14.2);
+    expect(mid.y).toBeCloseTo(17.625, 5);
     expect(bottom.y).toBe(0);
-    expect(bottom.z).toBeCloseTo(1, 5);
+    expect(bottom.z).toBeCloseTo(-10.4, 5);
     expect(bottom.speedFactor).toBeGreaterThan(mid.speedFactor);
     expect(mid.speedFactor).toBeGreaterThan(top.speedFactor);
   });
 
   it('assigns maximum wetness near the pool and waterfall splash zone', () => {
     const shoreline = computeRockWetness({ x: 10, y: 0.1, z: 6 });
-    const splashZone = computeRockWetness({ x: 1.5, y: 8, z: 0.4 });
-    const dryHighCliff = computeRockWetness({ x: 20, y: 24, z: 10 });
+    const splashZone = computeRockWetness({ x: 1.5, y: 8, z: SCENE_CONFIG.plungeCenterZ });
+    const dryHighCliff = computeRockWetness({ x: 35, y: 28, z: -24 });
 
     expect(shoreline).toBe(1);
     expect(splashZone).toBeGreaterThan(0.8);
     expect(dryHighCliff).toBe(0);
   });
 
-  it('recesses the amphitheater grotto directly behind the waterfall', () => {
-    const behindWaterfall = computeAmphitheaterRadius(0);
-    const sideCanyon = computeAmphitheaterRadius(Math.PI * 0.5);
-
-    expect(behindWaterfall).toBeLessThan(sideCanyon);
-  });
-
-  it('generates basalt columns while leaving the waterfall channel clear', () => {
-    const columns = generateBasaltColumnLayout({
-      seed: 1337,
-      ringColumnCount: 120,
-      hangingColumnCount: 36,
-      outerWallCount: 80,
+  it('creates an open valley in front of the cliff escarpment', () => {
+    const behindFalls = computeOpenVolcanicTerrainHeight({ x: 12, z: -24 });
+    const plungePool = computeOpenVolcanicTerrainHeight({
+      x: 0,
+      z: SCENE_CONFIG.plungeCenterZ + 3,
+    });
+    const openValleyShore = computeOpenVolcanicTerrainHeight({ x: 16, z: 22 });
+    const riverMid = computeOpenVolcanicTerrainHeight({
+      x: computeRiverCenterX(24),
+      z: 24,
     });
 
-    expect(columns.length).toBeGreaterThan(200);
+    expect(behindFalls).toBeGreaterThan(18);
+    expect(plungePool).toBeLessThan(0);
+    expect(riverMid).toBeLessThan(0);
+    expect(openValleyShore).toBeLessThan(5);
+    expect(computeEscarpmentLineZ(0)).toBeLessThan(SCENE_CONFIG.crestZ);
+  });
 
-    const hangingInWaterChannel = columns.filter(
-      (column) => column.isHanging && Math.abs(column.x) < 3.55 && column.z < 0.2,
-    );
-    expect(hangingInWaterChannel).toEqual([]);
+  it('keeps all basalt columns along the back cliff without enclosing the viewer', () => {
+    const columns = generateBasaltColumnLayout({
+      seed: 202611,
+      cliffClusterCount: 150,
+      ledgeOutcropCount: 56,
+    });
 
-    const channelColumns = columns.filter(
-      (column) => !column.isHanging && Math.abs(column.x) < 3.6 && column.z < -0.5,
-    );
-    for (const column of channelColumns) {
-      const topY = column.y + column.height * 0.5;
-      expect(topY).toBeLessThan(SCENE_CONFIG.crestHeight);
-    }
+    expect(columns.length).toBeGreaterThan(120);
+
+    const columnsInFrontValley = columns.filter((column) => column.z > -7.5);
+    expect(columnsInFrontValley).toEqual([]);
+
+    const columnsInWaterfallChannel = columns.filter((column) => Math.abs(column.x) < 4.9);
+    expect(columnsInWaterfallChannel).toEqual([]);
   });
 });

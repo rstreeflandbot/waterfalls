@@ -60,11 +60,11 @@ export function createHud(options: {
 
   const eyebrow = document.createElement('div');
   eyebrow.className = 'hud-eyebrow';
-  eyebrow.textContent = 'ICELAND · GOLDEN HOUR';
+  eyebrow.textContent = 'ICELAND · VOLCANIC HIGHLANDS';
 
   const title = document.createElement('div');
   title.className = 'hud-title';
-  title.textContent = 'Svartifoss';
+  title.textContent = 'Skógafoss';
 
   titleBlock.append(eyebrow, title);
   topRow.append(titleBlock);

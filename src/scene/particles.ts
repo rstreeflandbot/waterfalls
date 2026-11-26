@@ -80,7 +80,7 @@ function createMistLayer(options: {
 
     const duration = config.minDuration + rand() * (config.maxDuration - config.minDuration);
     const scale = config.minScale + rand() * (config.maxScale - config.minScale);
-    const spinSpeed = (rand() - 0.5) * 0.34;
+    const spinSpeed = (rand() - 0.5) * 0.28;
     const seed = rand();
 
     params[i4] = duration;
@@ -146,37 +146,37 @@ function createSprayDroplets(options: {
 
   for (let i = 0; i < options.count; i++) {
     const i3 = i * 3;
-    const isCurtainSpray = i < options.count * 0.35;
+    const isCurtainSpray = i < options.count * 0.3;
 
     if (isCurtainSpray) {
       const heightRatio = rand();
-      positions[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 0.95;
-      positions[i3 + 1] = 2.0 + heightRatio * (SCENE_CONFIG.crestHeight - 3.5);
+      positions[i3] = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 0.92;
+      positions[i3 + 1] = 2.0 + heightRatio * (SCENE_CONFIG.crestHeight - 4.0);
       positions[i3 + 2] =
-        SCENE_CONFIG.crestZ + 1.2 + (1 - heightRatio) * 2.5 + (rand() - 0.5) * 1.1;
+        SCENE_CONFIG.crestZ + 1.4 + (1 - heightRatio) * 3.0 + (rand() - 0.5) * 1.1;
 
-      velocities[i3] = (rand() - 0.5) * 2.4;
-      velocities[i3 + 1] = -0.8 - rand() * 2.2;
-      velocities[i3 + 2] = 0.8 + rand() * 2.1;
+      velocities[i3] = (rand() - 0.5) * 2.2;
+      velocities[i3 + 1] = -0.8 - rand() * 2.0;
+      velocities[i3 + 2] = 0.8 + rand() * 2.0;
 
       params[i3] = 1.6 + rand() * 1.6;
       params[i3 + 1] = rand();
-      params[i3 + 2] = 0.8 + rand() * 1.2;
+      params[i3 + 2] = 0.65 + rand() * 1.0;
     } else {
-      const angle = (rand() - 0.5) * Math.PI * 1.1;
+      const angle = (rand() - 0.5) * Math.PI * 1.15;
       const spreadX = (rand() - 0.5) * SCENE_CONFIG.plungeWidth * 1.05;
       positions[i3] = spreadX;
-      positions[i3 + 1] = 0.25 + rand() * 1.4;
-      positions[i3 + 2] = SCENE_CONFIG.plungeCenterZ + 0.3 + (rand() - 0.5) * 2.4;
+      positions[i3 + 1] = 0.25 + rand() * 1.2;
+      positions[i3 + 2] = SCENE_CONFIG.plungeCenterZ + 0.4 + (rand() - 0.5) * 2.6;
 
-      const launchSpeed = 2.6 + rand() * 5.2;
+      const launchSpeed = 2.4 + rand() * 5.0;
       velocities[i3] = Math.sin(angle) * launchSpeed * 0.85;
-      velocities[i3 + 1] = 3.2 + rand() * 5.6;
-      velocities[i3 + 2] = Math.cos(angle) * launchSpeed * 0.95 + 0.9;
+      velocities[i3 + 1] = 2.8 + rand() * 5.2;
+      velocities[i3 + 2] = Math.cos(angle) * launchSpeed * 0.92 + 0.8;
 
       params[i3] = 1.4 + rand() * 1.8;
       params[i3 + 1] = rand();
-      params[i3 + 2] = 0.9 + rand() * 1.6;
+      params[i3 + 2] = 0.75 + rand() * 1.3;
     }
   }
 
@@ -232,67 +232,67 @@ export function createWaterfallParticles(options: {
     sunDirection,
     noiseTexture: options.noiseTexture,
     config: {
-      count: options.reducedOverdraw ? 56 : 92,
+      count: options.reducedOverdraw ? 42 : 64,
       seed: 10101,
-      opacityScale: options.reducedOverdraw ? 0.46 : 0.39,
-      minScale: 3.6,
-      maxScale: 6.8,
-      minDuration: 3.6,
-      maxDuration: 6.5,
-      spawnSpreadX: 5.2,
-      spawnMinY: 0.4,
-      spawnMaxY: 2.2,
-      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 1.0,
+      opacityScale: 0.19,
+      minScale: 3.4,
+      maxScale: 6.4,
+      minDuration: 3.8,
+      maxDuration: 6.8,
+      spawnSpreadX: 6.4,
+      spawnMinY: 0.35,
+      spawnMaxY: 1.8,
+      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 1.2,
       spawnSpreadZ: 1.8,
-      driftForwardMin: 2.8,
-      driftForwardMax: 8.5,
-      driftUpMin: 3.5,
-      driftUpMax: 8.5,
-      driftSideSpread: 4.2,
+      driftForwardMin: 2.2,
+      driftForwardMax: 6.8,
+      driftUpMin: 2.8,
+      driftUpMax: 7.2,
+      driftSideSpread: 4.5,
       renderOrder: 6,
     },
   });
 
-  const risingCanyonMist = createMistLayer({
+  const risingValleyMist = createMistLayer({
     sunDirection,
     noiseTexture: options.noiseTexture,
     config: {
-      count: options.reducedOverdraw ? 36 : 62,
+      count: options.reducedOverdraw ? 26 : 40,
       seed: 20202,
-      opacityScale: options.reducedOverdraw ? 0.27 : 0.23,
-      minScale: 6.8,
-      maxScale: 12.6,
+      opacityScale: 0.1,
+      minScale: 6.5,
+      maxScale: 11.5,
       minDuration: 7.5,
       maxDuration: 13.0,
-      spawnSpreadX: 7.5,
-      spawnMinY: 1.2,
-      spawnMaxY: 5.5,
-      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 3.4,
-      spawnSpreadZ: 3.8,
-      driftForwardMin: 5.5,
-      driftForwardMax: 15.0,
-      driftUpMin: 4.0,
-      driftUpMax: 11.5,
-      driftSideSpread: 6.8,
+      spawnSpreadX: 8.5,
+      spawnMinY: 1.0,
+      spawnMaxY: 4.0,
+      spawnCenterZ: SCENE_CONFIG.plungeCenterZ + 3.2,
+      spawnSpreadZ: 3.2,
+      driftForwardMin: 4.5,
+      driftForwardMax: 12.0,
+      driftUpMin: 3.2,
+      driftUpMax: 9.0,
+      driftSideSpread: 7.5,
       renderOrder: 7,
     },
   });
 
   const droplets = createSprayDroplets({
-    count: options.reducedOverdraw ? 1100 : 1800,
+    count: options.reducedOverdraw ? 900 : 1500,
     sunDirection,
     pixelRatio: options.initialPixelRatio,
   });
 
   group.add(heavyBaseSpray.mesh);
-  group.add(risingCanyonMist.mesh);
+  group.add(risingValleyMist.mesh);
   group.add(droplets.points);
 
   return {
     group,
     update: (elapsedSeconds: number) => {
       heavyBaseSpray.timeUniform.value = elapsedSeconds;
-      risingCanyonMist.timeUniform.value = elapsedSeconds;
+      risingValleyMist.timeUniform.value = elapsedSeconds;
       droplets.timeUniform.value = elapsedSeconds;
     },
     setPixelRatio: (pixelRatio: number) => {
@@ -300,7 +300,7 @@ export function createWaterfallParticles(options: {
     },
     dispose: () => {
       heavyBaseSpray.dispose();
-      risingCanyonMist.dispose();
+      risingValleyMist.dispose();
       droplets.dispose();
     },
   };

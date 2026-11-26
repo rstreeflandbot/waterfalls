@@ -40,20 +40,20 @@ const CINEMATIC_GRADE_SHADER = {
       vec4 texel = texture2D(tDiffuse, vUv);
       vec3 color = texel.rgb;
 
-      color = acesFilm(color * 1.06);
+      color = acesFilm(color * 0.94);
 
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      vec3 coolShadows = vec3(0.94, 0.98, 1.04);
-      vec3 warmHighlights = vec3(1.06, 0.99, 0.93);
-      color *= mix(coolShadows, warmHighlights, smoothstep(0.15, 0.85, luma));
+      vec3 coolShadows = vec3(0.95, 0.98, 1.03);
+      vec3 warmHighlights = vec3(1.04, 0.99, 0.95);
+      color *= mix(coolShadows, warmHighlights, smoothstep(0.18, 0.85, luma));
 
       color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
 
       vec2 centered = vUv - 0.5;
-      float vignette = 1.0 - dot(centered, centered) * 0.50;
-      color *= clamp(vignette, 0.64, 1.0);
+      float vignette = 1.0 - dot(centered, centered) * 0.34;
+      color *= clamp(vignette, 0.74, 1.0);
 
-      float grain = (hashGrain(vUv * 1200.0 + fract(uTime * 17.0)) - 0.5) * 0.014;
+      float grain = (hashGrain(vUv * 1200.0 + fract(uTime * 17.0)) - 0.5) * 0.011;
       color = clamp(color + grain, 0.0, 1.0);
 
       gl_FragColor = vec4(color, texel.a);
@@ -89,9 +89,9 @@ export function createPostProcessing(options: {
       Math.max(1, Math.floor(options.width * 0.5)),
       Math.max(1, Math.floor(options.height * 0.5)),
     ),
-    0.34,
-    0.68,
-    0.85,
+    0.16,
+    0.55,
+    1.12,
   );
   composer.addPass(bloomPass);
 

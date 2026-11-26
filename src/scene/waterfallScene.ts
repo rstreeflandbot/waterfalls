@@ -3,6 +3,7 @@ import { createCameraController } from './cameraController';
 import { createIcelandicCliff } from './cliff';
 import { createIcelandicLighting } from './lighting';
 import { createWaterfallParticles } from './particles';
+import { createWaterfallTextureBundle } from './pbrTextures';
 import { createPostProcessing } from './postprocessing';
 import { createProceduralNoiseTexture } from './proceduralTextures';
 import { createIcelandicSky } from './sky';
@@ -38,7 +39,7 @@ export function createWaterfallScene(container: HTMLElement): WaterfallSceneCont
   });
 
   const isSoftwareGpu = detectSoftwareRenderer(renderer);
-  const maxPixelRatio = isSoftwareGpu ? 0.85 : 1.75;
+  const maxPixelRatio = isSoftwareGpu ? 0.85 : 2.0;
   const pixelRatio = Math.min(window.devicePixelRatio || 1, maxPixelRatio);
 
   renderer.setPixelRatio(pixelRatio);
@@ -51,13 +52,14 @@ export function createWaterfallScene(container: HTMLElement): WaterfallSceneCont
 
   const scene = new THREE.Scene();
 
-  const camera = new THREE.PerspectiveCamera(44, initialWidth / initialHeight, 0.25, 420);
+  const camera = new THREE.PerspectiveCamera(45, initialWidth / initialHeight, 0.25, 520);
   const cameraController = createCameraController({
     camera,
     domElement: renderer.domElement,
   });
 
   const noiseTexture = createProceduralNoiseTexture();
+  const textures = createWaterfallTextureBundle({ renderer, isSoftwareGpu });
 
   const sky = createIcelandicSky({ renderer, noiseTexture });
   scene.add(sky.mesh);
@@ -66,13 +68,19 @@ export function createWaterfallScene(container: HTMLElement): WaterfallSceneCont
   const lighting = createIcelandicLighting(scene);
   scene.add(lighting.group);
 
-  const cliff = createIcelandicCliff(noiseTexture);
+  const cliff = createIcelandicCliff({ noiseTexture, textures });
   scene.add(cliff.group);
 
-  const waterPool = createGlacialWaterPool(noiseTexture);
+  const waterPool = createGlacialWaterPool({
+    noiseTexture,
+    foamTexture: textures.waterfallFoam,
+  });
   scene.add(waterPool.mesh);
 
-  const waterfall = createIcelandicWaterfall(noiseTexture);
+  const waterfall = createIcelandicWaterfall({
+    noiseTexture,
+    foamTexture: textures.waterfallFoam,
+  });
   scene.add(waterfall.group);
 
   const particles = createWaterfallParticles({
@@ -88,7 +96,7 @@ export function createWaterfallScene(container: HTMLElement): WaterfallSceneCont
     camera,
     width: initialWidth,
     height: initialHeight,
-    samples: isSoftwareGpu ? 0 : 2,
+    samples: isSoftwareGpu ? 0 : 4,
   });
 
   const clock = new THREE.Clock();
@@ -171,6 +179,7 @@ export function createWaterfallScene(container: HTMLElement): WaterfallSceneCont
       cliff.dispose();
       lighting.dispose();
       sky.dispose();
+      textures.dispose();
       noiseTexture.dispose();
       renderer.dispose();
       renderer.domElement.remove();

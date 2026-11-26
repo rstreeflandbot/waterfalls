@@ -11,48 +11,44 @@ export interface LightingSystem {
 export function createIcelandicLighting(scene: THREE.Scene): LightingSystem {
   const group = new THREE.Group();
 
-  scene.fog = new THREE.FogExp2(0x1f252e, 0.0145);
+  scene.fog = new THREE.FogExp2(0x28303b, 0.0056);
 
-  const sunLight = new THREE.DirectionalLight(0xffb578, 3.6);
+  const sunLight = new THREE.DirectionalLight(0xffbe86, 2.95);
   sunLight.position.set(
-    SCENE_CONFIG.sunDirection.x * 55,
-    SCENE_CONFIG.sunDirection.y * 55 + 6,
-    SCENE_CONFIG.sunDirection.z * 55,
+    SCENE_CONFIG.sunDirection.x * 85,
+    SCENE_CONFIG.sunDirection.y * 85 + 14,
+    SCENE_CONFIG.sunDirection.z * 85,
   );
-  sunLight.target.position.set(0, 6, 0);
+  sunLight.target.position.set(0, 6, -12);
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
-  sunLight.shadow.camera.near = 10;
-  sunLight.shadow.camera.far = 120;
-  sunLight.shadow.camera.left = -30;
-  sunLight.shadow.camera.right = 30;
-  sunLight.shadow.camera.top = 34;
-  sunLight.shadow.camera.bottom = -12;
-  sunLight.shadow.bias = -0.0005;
-  sunLight.shadow.normalBias = 0.04;
+  sunLight.shadow.camera.near = 15;
+  sunLight.shadow.camera.far = 210;
+  sunLight.shadow.camera.left = -56;
+  sunLight.shadow.camera.right = 56;
+  sunLight.shadow.camera.top = 48;
+  sunLight.shadow.camera.bottom = -22;
+  sunLight.shadow.bias = -0.0004;
+  sunLight.shadow.normalBias = 0.045;
   group.add(sunLight);
   group.add(sunLight.target);
 
-  const skyHemisphere = new THREE.HemisphereLight(0x7d97b8, 0x161b20, 1.05);
+  const skyHemisphere = new THREE.HemisphereLight(0x88a8cb, 0x1a2026, 1.15);
   group.add(skyHemisphere);
 
-  const canyonRimLight = new THREE.DirectionalLight(0x6e8fb5, 0.85);
-  canyonRimLight.position.set(24, 18, 28);
-  group.add(canyonRimLight);
+  const valleyFillLight = new THREE.DirectionalLight(0x7d9fc4, 0.95);
+  valleyFillLight.position.set(38, 26, 48);
+  group.add(valleyFillLight);
 
-  const mistBounceLight = new THREE.PointLight(0xffbe88, 18, 34, 1.7);
-  mistBounceLight.position.set(-2.5, 4.8, 5.2);
+  const mistBounceLight = new THREE.PointLight(0xffc998, 8.5, 36, 1.8);
+  mistBounceLight.position.set(-4.0, 5.2, -5.5);
   group.add(mistBounceLight);
-
-  const grottoFillLight = new THREE.PointLight(0x6b90ad, 8, 24, 1.8);
-  grottoFillLight.position.set(0, 6.5, -1.5);
-  group.add(grottoFillLight);
 
   return {
     group,
     sunLight,
     update: (elapsedSeconds: number) => {
-      mistBounceLight.intensity = 17.0 + Math.sin(elapsedSeconds * 1.4) * 1.6;
+      mistBounceLight.intensity = 8.2 + Math.sin(elapsedSeconds * 1.2) * 0.8;
     },
     dispose: () => {
       sunLight.shadow.map?.dispose();

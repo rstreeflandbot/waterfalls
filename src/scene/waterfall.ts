@@ -5,7 +5,7 @@ import {
   WATERFALL_CURTAIN_FRAGMENT_SHADER,
   WATERFALL_CURTAIN_VERTEX_SHADER,
 } from '../shaders/waterfallShaders';
-import { SCENE_CONFIG, computeParabolicFallPoint } from './cliffMath';
+import { SCENE_CONFIG, computeEscarpmentLineZ, computeParabolicFallPoint } from './cliffMath';
 
 export interface WaterfallSystem {
   readonly group: THREE.Group;
@@ -31,8 +31,8 @@ interface CurtainSpec {
 }
 
 function createParabolicCurtainGeometry(spec: CurtainSpec): THREE.BufferGeometry {
-  const widthSegments = 32;
-  const heightSegments = 44;
+  const widthSegments = 36;
+  const heightSegments = 48;
   const geometry = new THREE.PlaneGeometry(1, 1, widthSegments, heightSegments);
   const posAttr = geometry.attributes.position;
   const uvAttr = geometry.attributes.uv;
@@ -59,7 +59,7 @@ function createParabolicCurtainGeometry(spec: CurtainSpec): THREE.BufferGeometry
     });
 
     const archCurve = (1 - centeredU * centeredU) * spec.archDepth;
-    const organicWave = Math.sin(centeredU * Math.PI * 2.5 + spec.phaseOffset) * 0.16 * progress;
+    const organicWave = Math.sin(centeredU * Math.PI * 2.5 + spec.phaseOffset) * 0.18 * progress;
 
     posAttr.setXYZ(i, x, point.y, point.z + archCurve + organicWave);
   }
@@ -69,7 +69,7 @@ function createParabolicCurtainGeometry(spec: CurtainSpec): THREE.BufferGeometry
 }
 
 function createCrestGeometry(): THREE.BufferGeometry {
-  const geometry = new THREE.PlaneGeometry(SCENE_CONFIG.crestWidth + 0.6, 5.2, 28, 18);
+  const geometry = new THREE.PlaneGeometry(SCENE_CONFIG.crestWidth + 0.8, 7.5, 32, 20);
   const posAttr = geometry.attributes.position;
   const uvAttr = geometry.attributes.uv;
 
@@ -84,10 +84,10 @@ function createCrestGeometry(): THREE.BufferGeometry {
     const progress = 1 - v;
 
     const x = centeredU * (SCENE_CONFIG.crestWidth * 0.52);
-    const z = SCENE_CONFIG.crestZ - 4.4 + progress * 4.65;
-    const lipDrop = Math.pow(Math.max(0, progress - 0.65) / 0.35, 2.2) * 1.15;
-    const channelCup = centeredU * centeredU * 0.22;
-    const y = SCENE_CONFIG.crestHeight + 0.2 - lipDrop + channelCup;
+    const z = SCENE_CONFIG.crestZ - 6.8 + progress * 7.05;
+    const lipDrop = Math.pow(Math.max(0, progress - 0.7) / 0.3, 2.2) * 1.45;
+    const channelCup = centeredU * centeredU * 0.25;
+    const y = SCENE_CONFIG.crestHeight + 0.15 - lipDrop + channelCup;
 
     posAttr.setXYZ(i, x, y, z);
   }
@@ -96,7 +96,10 @@ function createCrestGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
-export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): WaterfallSystem {
+export function createIcelandicWaterfall(options: {
+  readonly noiseTexture: THREE.DataTexture;
+  readonly foamTexture: THREE.DataTexture;
+}): WaterfallSystem {
   const group = new THREE.Group();
   const sunDir = new THREE.Vector3(
     SCENE_CONFIG.sunDirection.x,
@@ -104,19 +107,22 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
     SCENE_CONFIG.sunDirection.z,
   ).normalize();
 
+  const leftSideZ = computeEscarpmentLineZ(-5.8) + 1.4;
+  const rightSideZ = computeEscarpmentLineZ(5.9) + 1.4;
+
   const curtainSpecs: CurtainSpec[] = [
     {
-      widthTop: SCENE_CONFIG.crestWidth * 0.88,
-      widthBottom: SCENE_CONFIG.plungeWidth * 0.86,
-      startY: SCENE_CONFIG.crestHeight - 0.1,
+      widthTop: SCENE_CONFIG.crestWidth * 0.9,
+      widthBottom: SCENE_CONFIG.plungeWidth * 0.88,
+      startY: SCENE_CONFIG.crestHeight - 0.15,
       endY: -0.4,
       startZ: SCENE_CONFIG.crestZ - 0.35,
-      forwardReach: 2.85,
+      forwardReach: 3.4,
       centerX: 0,
-      archDepth: 0.45,
+      archDepth: 0.52,
       opacity: 0.96,
-      speed: 1.52,
-      turbulence: 0.55,
+      speed: 1.48,
+      turbulence: 0.52,
       phaseOffset: 0.0,
       coreDensity: 0.9,
       renderOrder: 2,
@@ -126,95 +132,63 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
       widthBottom: SCENE_CONFIG.plungeWidth * 0.98,
       startY: SCENE_CONFIG.crestHeight,
       endY: -0.35,
-      startZ: SCENE_CONFIG.crestZ,
-      forwardReach: 3.25,
+      startZ: SCENE_CONFIG.crestZ + 0.05,
+      forwardReach: 3.85,
       centerX: 0,
-      archDepth: 0.72,
-      opacity: 0.82,
-      speed: 1.74,
-      turbulence: 0.95,
+      archDepth: 0.82,
+      opacity: 0.78,
+      speed: 1.68,
+      turbulence: 0.92,
       phaseOffset: 2.3,
-      coreDensity: 0.45,
+      coreDensity: 0.42,
       renderOrder: 3,
     },
     {
-      widthTop: SCENE_CONFIG.crestWidth * 1.05,
-      widthBottom: SCENE_CONFIG.plungeWidth * 1.12,
+      widthTop: SCENE_CONFIG.crestWidth * 1.04,
+      widthBottom: SCENE_CONFIG.plungeWidth * 1.1,
       startY: SCENE_CONFIG.crestHeight + 0.05,
       endY: -0.25,
-      startZ: SCENE_CONFIG.crestZ + 0.25,
-      forwardReach: 3.7,
-      centerX: 0.12,
-      archDepth: 0.95,
-      opacity: 0.56,
-      speed: 1.98,
-      turbulence: 1.35,
+      startZ: SCENE_CONFIG.crestZ + 0.35,
+      forwardReach: 4.3,
+      centerX: 0.15,
+      archDepth: 1.05,
+      opacity: 0.46,
+      speed: 1.9,
+      turbulence: 1.25,
       phaseOffset: 4.9,
       coreDensity: 0.12,
       renderOrder: 4,
     },
     {
-      widthTop: 1.35,
-      widthBottom: 1.95,
-      startY: SCENE_CONFIG.crestHeight - 1.4,
+      widthTop: 1.6,
+      widthBottom: 2.2,
+      startY: SCENE_CONFIG.crestHeight - 1.2,
       endY: -0.2,
-      startZ: SCENE_CONFIG.crestZ - 0.1,
-      forwardReach: 2.6,
-      centerX: -4.45,
-      archDepth: 0.2,
-      opacity: 0.62,
-      speed: 1.35,
-      turbulence: 0.6,
-      phaseOffset: 7.4,
-      coreDensity: 0.2,
-      renderOrder: 3,
-    },
-    {
-      widthTop: 1.15,
-      widthBottom: 1.75,
-      startY: SCENE_CONFIG.crestHeight - 2.2,
-      endY: -0.2,
-      startZ: SCENE_CONFIG.crestZ + 0.3,
-      forwardReach: 2.35,
-      centerX: 4.55,
-      archDepth: 0.2,
-      opacity: 0.58,
-      speed: 1.28,
+      startZ: leftSideZ,
+      forwardReach: 3.1,
+      centerX: -5.8,
+      archDepth: 0.25,
+      opacity: 0.56,
+      speed: 1.32,
       turbulence: 0.55,
+      phaseOffset: 7.4,
+      coreDensity: 0.24,
+      renderOrder: 3,
+    },
+    {
+      widthTop: 1.45,
+      widthBottom: 2.05,
+      startY: SCENE_CONFIG.crestHeight - 1.6,
+      endY: -0.2,
+      startZ: rightSideZ,
+      forwardReach: 2.95,
+      centerX: 5.9,
+      archDepth: 0.25,
+      opacity: 0.54,
+      speed: 1.26,
+      turbulence: 0.52,
       phaseOffset: 10.1,
-      coreDensity: 0.18,
-      renderOrder: 3,
-    },
-    {
-      widthTop: 0.75,
-      widthBottom: 1.15,
-      startY: SCENE_CONFIG.crestHeight - 3.6,
-      endY: -0.1,
-      startZ: SCENE_CONFIG.crestZ + 1.15,
-      forwardReach: 1.75,
-      centerX: -6.15,
-      archDepth: 0.12,
-      opacity: 0.44,
-      speed: 1.12,
-      turbulence: 0.42,
-      phaseOffset: 13.7,
-      coreDensity: 0.1,
-      renderOrder: 3,
-    },
-    {
-      widthTop: 0.72,
-      widthBottom: 1.1,
-      startY: SCENE_CONFIG.crestHeight - 4.1,
-      endY: -0.1,
-      startZ: SCENE_CONFIG.crestZ + 1.3,
-      forwardReach: 1.65,
-      centerX: 6.3,
-      archDepth: 0.12,
-      opacity: 0.42,
-      speed: 1.08,
-      turbulence: 0.4,
-      phaseOffset: 16.2,
-      coreDensity: 0.1,
+      coreDensity: 0.22,
       renderOrder: 3,
     },
   ];
@@ -241,7 +215,8 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
         uPhaseOffset: { value: spec.phaseOffset },
         uCoreDensity: { value: spec.coreDensity },
         uSunDirection: { value: sunDir },
-        uNoiseTex: { value: noiseTexture },
+        uNoiseTex: { value: options.noiseTexture },
+        uFoamTex: { value: options.foamTexture },
       },
       transparent: true,
       depthWrite: spec.coreDensity > 0.7,
@@ -263,13 +238,14 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
     fragmentShader: WATERFALL_CURTAIN_FRAGMENT_SHADER,
     uniforms: {
       uTime: crestTime,
-      uOpacity: { value: 0.92 },
-      uSpeed: { value: 1.15 },
-      uTurbulence: { value: 0.25 },
+      uOpacity: { value: 0.94 },
+      uSpeed: { value: 1.1 },
+      uTurbulence: { value: 0.22 },
       uPhaseOffset: { value: 1.4 },
-      uCoreDensity: { value: 0.72 },
+      uCoreDensity: { value: 0.74 },
       uSunDirection: { value: sunDir },
-      uNoiseTex: { value: noiseTexture },
+      uNoiseTex: { value: options.noiseTexture },
+      uFoamTex: { value: options.foamTexture },
     },
     transparent: true,
     depthWrite: true,
@@ -280,7 +256,7 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
   crestMesh.renderOrder = 2;
   group.add(crestMesh);
 
-  const boilGeometry = new THREE.PlaneGeometry(11.8, 6.2, 40, 28);
+  const boilGeometry = new THREE.PlaneGeometry(15.2, 7.6, 44, 28);
   boilGeometry.rotateX(-Math.PI / 2);
   geometriesToDispose.push(boilGeometry);
 
@@ -292,7 +268,8 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
     uniforms: {
       uTime: boilTime,
       uSunDirection: { value: sunDir },
-      uNoiseTex: { value: noiseTexture },
+      uNoiseTex: { value: options.noiseTexture },
+      uFoamTex: { value: options.foamTexture },
     },
     transparent: true,
     depthWrite: false,
@@ -300,7 +277,7 @@ export function createIcelandicWaterfall(noiseTexture: THREE.DataTexture): Water
   materialsToDispose.push(boilMaterial);
 
   const boilMesh = new THREE.Mesh(boilGeometry, boilMaterial);
-  boilMesh.position.set(0, SCENE_CONFIG.poolSurfaceY + 0.08, SCENE_CONFIG.plungeCenterZ + 0.55);
+  boilMesh.position.set(0, SCENE_CONFIG.poolSurfaceY + 0.08, SCENE_CONFIG.plungeCenterZ + 0.65);
   boilMesh.renderOrder = 5;
   group.add(boilMesh);
 

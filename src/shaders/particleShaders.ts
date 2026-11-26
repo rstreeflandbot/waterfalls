@@ -23,11 +23,11 @@ void main() {
 
   float easeOut = 1.0 - pow(1.0 - age, 2.2);
   vec3 centerPos = aOrigin;
-  centerPos.x += aDrift.x * easeOut + sin(uTime * 0.45 + seed * 12.0) * 1.15 * age;
-  centerPos.y += aDrift.y * easeOut + age * age * 1.4;
+  centerPos.x += aDrift.x * easeOut + sin(uTime * 0.42 + seed * 12.0) * 1.1 * age;
+  centerPos.y += aDrift.y * easeOut + age * age * 1.1;
   centerPos.z += aDrift.z * easeOut + cos(uTime * 0.35 + seed * 9.0) * 0.65 * age;
 
-  float scale = baseScale * (0.45 + easeOut * 1.45);
+  float scale = baseScale * (0.45 + easeOut * 1.35);
   float angle = seed * 6.28318 + uTime * spinSpeed;
   float cosA = cos(angle);
   float sinA = sin(angle);
@@ -63,14 +63,14 @@ void main() {
     discard;
   }
 
-  float softCircle = pow(1.0 - radial, 1.85);
-  vec2 noiseCoord = vUv * 0.72 + vec2(vSeed * 3.7, -uTime * 0.025 + vSeed * 1.9);
+  float softCircle = pow(1.0 - radial, 2.1);
+  vec2 noiseCoord = vUv * 0.72 + vec2(vSeed * 3.7, -uTime * 0.024 + vSeed * 1.9);
   vec4 sampleA = texture2D(uNoiseTex, noiseCoord);
-  vec4 sampleB = texture2D(uNoiseTex, noiseCoord * 1.75 + vec2(0.42, -uTime * 0.04));
-  float cloudShape = softCircle * smoothstep(0.18, 0.84, sampleA.a * 0.66 + sampleB.r * 0.38);
+  vec4 sampleB = texture2D(uNoiseTex, noiseCoord * 1.75 + vec2(0.42, -uTime * 0.038));
+  float cloudShape = softCircle * smoothstep(0.24, 0.86, sampleA.a * 0.64 + sampleB.r * 0.38);
 
-  float lifeFade = smoothstep(0.0, 0.18, vAge) * (1.0 - smoothstep(0.45, 1.0, vAge));
-  float groundFade = smoothstep(-0.35, 0.85, vWorldPos.y);
+  float lifeFade = smoothstep(0.0, 0.16, vAge) * (1.0 - smoothstep(0.42, 1.0, vAge));
+  float groundFade = smoothstep(-0.25, 0.75, vWorldPos.y);
   float alpha = cloudShape * lifeFade * groundFade * uOpacityScale;
 
   if (alpha < 0.004) {
@@ -79,19 +79,19 @@ void main() {
 
   vec3 viewDir = normalize(vWorldPos - cameraPosition);
   vec3 sunDir = normalize(uSunDirection);
-  float forwardScatter = pow(max(dot(viewDir, sunDir), 0.0), 3.2);
+  float forwardScatter = pow(max(dot(viewDir, sunDir), 0.0), 3.4);
   float sideScatter = clamp(dot(normalize(vec3(vWorldPos.x, vWorldPos.y + 4.0, vWorldPos.z)), sunDir) * 0.5 + 0.5, 0.0, 1.0);
 
-  vec3 coolMist = vec3(0.44, 0.53, 0.62);
-  vec3 sunlitMist = vec3(1.06, 0.79, 0.55);
-  vec3 goldenRim = vec3(1.38, 0.87, 0.48);
+  vec3 coolMist = vec3(0.46, 0.54, 0.62);
+  vec3 sunlitMist = vec3(0.92, 0.74, 0.56);
+  vec3 goldenRim = vec3(1.12, 0.78, 0.48);
 
-  float sunExposure = smoothstep(0.5, 9.5, vWorldPos.y) * 0.65 + 0.35;
-  vec3 color = mix(coolMist, sunlitMist, clamp((sideScatter * 0.55 + forwardScatter * 0.6) * sunExposure, 0.0, 0.92));
-  color += goldenRim * forwardScatter * 0.44 * sunExposure * (1.0 - softCircle * 0.45);
+  float sunExposure = smoothstep(0.6, 8.5, vWorldPos.y) * 0.55 + 0.35;
+  vec3 color = mix(coolMist, sunlitMist, clamp((sideScatter * 0.45 + forwardScatter * 0.5) * sunExposure, 0.0, 0.78));
+  color += goldenRim * forwardScatter * 0.28 * sunExposure * (1.0 - softCircle * 0.45);
 
   float camDist = length(cameraPosition - vWorldPos);
-  float nearCamFade = smoothstep(2.5, 7.5, camDist);
+  float nearCamFade = smoothstep(5.5, 13.0, camDist);
 
   gl_FragColor = vec4(color, alpha * nearCamFade);
 }
@@ -134,8 +134,8 @@ void main() {
   vAlpha = fadeIn * fadeOut * smoothstep(-0.05, 0.35, pos.y);
   vSparkle = pow(sin(uTime * 6.5 + seed * 47.0) * 0.5 + 0.5, 4.0);
 
-  float sizeAtten = (baseSize * uPixelRatio * 48.0) / max(-mvPosition.z, 1.0);
-  gl_PointSize = clamp(sizeAtten, 1.0, 14.0);
+  float sizeAtten = (baseSize * uPixelRatio * 42.0) / max(-mvPosition.z, 1.0);
+  gl_PointSize = clamp(sizeAtten, 1.0, 10.0);
   gl_Position = projectionMatrix * mvPosition;
 }
 `;
@@ -154,16 +154,16 @@ void main() {
     discard;
   }
 
-  float disc = pow(1.0 - dist * 2.0, 1.7);
+  float disc = pow(1.0 - dist * 2.0, 1.8);
   vec3 viewDir = normalize(vWorldPos - cameraPosition);
   vec3 sunDir = normalize(uSunDirection);
-  float sunCatch = pow(max(dot(viewDir, sunDir), 0.0), 2.2);
+  float sunCatch = pow(max(dot(viewDir, sunDir), 0.0), 2.6);
 
-  vec3 baseSpray = vec3(0.76, 0.85, 0.94);
-  vec3 goldGlint = vec3(1.55, 1.12, 0.72);
-  vec3 color = mix(baseSpray, goldGlint, clamp(sunCatch * 0.75 + vSparkle * 0.65, 0.0, 1.0));
+  vec3 baseSpray = vec3(0.76, 0.84, 0.92);
+  vec3 goldGlint = vec3(1.22, 0.92, 0.64);
+  vec3 color = mix(baseSpray, goldGlint, clamp(sunCatch * 0.65 + vSparkle * 0.55, 0.0, 1.0));
 
-  float alpha = disc * vAlpha * (0.42 + vSparkle * 0.45);
+  float alpha = disc * vAlpha * (0.34 + vSparkle * 0.38);
   if (alpha < 0.01) {
     discard;
   }

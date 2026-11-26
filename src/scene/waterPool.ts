@@ -8,8 +8,11 @@ export interface WaterPoolSystem {
   readonly dispose: () => void;
 }
 
-export function createGlacialWaterPool(noiseTexture: THREE.DataTexture): WaterPoolSystem {
-  const geometry = new THREE.PlaneGeometry(76, 84, 128, 128);
+export function createGlacialWaterPool(options: {
+  readonly noiseTexture: THREE.DataTexture;
+  readonly foamTexture: THREE.DataTexture;
+}): WaterPoolSystem {
+  const geometry = new THREE.PlaneGeometry(140, 165, 140, 150);
   geometry.rotateX(-Math.PI / 2);
 
   const sunDir = new THREE.Vector3(
@@ -20,9 +23,10 @@ export function createGlacialWaterPool(noiseTexture: THREE.DataTexture): WaterPo
 
   const uniforms = {
     uTime: { value: 0 },
-    uPlungeCenter: { value: new THREE.Vector2(0, SCENE_CONFIG.plungeCenterZ + 0.4) },
+    uPlungeCenter: { value: new THREE.Vector2(0, SCENE_CONFIG.plungeCenterZ + 0.5) },
     uSunDirection: { value: sunDir },
-    uNoiseTex: { value: noiseTexture },
+    uNoiseTex: { value: options.noiseTexture },
+    uFoamTex: { value: options.foamTexture },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -34,7 +38,7 @@ export function createGlacialWaterPool(noiseTexture: THREE.DataTexture): WaterPo
   });
 
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(0, SCENE_CONFIG.poolSurfaceY, 15.5);
+  mesh.position.set(0, SCENE_CONFIG.poolSurfaceY, 64.0);
   mesh.renderOrder = 1;
 
   return {
